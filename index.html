@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
+  <title>Control de Finanzas Familiares</title>
+  <!-- Google Fonts: Plus Jakarta Sans & Material Symbols Rounded -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700&family=Material+Symbols+Rounded:opsz,wght,FILL,GRAD@20..48,100..700,0..1,-50..200&display=swap" rel="stylesheet">
+  <!-- Chart.js -->
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <!-- CSS del Frontend -->
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <!-- CONTENEDOR PRINCIPAL -->
+  <div id="app-container">
+
+    <!-- 1. PANTALLA DE CONFIGURACIÓN INICIAL (FIRST RUN / CONEXIÓN) -->
+    <div id="view-setup" class="view active">
+      <header class="app-header">
+        <h1>Conectar Aplicación</h1>
+        <p class="subtitle">Enlaza este dispositivo con tu planilla de Google Sheets.</p>
+      </header>
+      <main class="view-content">
+        <form id="form-setup" class="form-container">
+          <div class="form-group">
+            <label for="setup-api-url">URL de la API (Google Apps Script)</label>
+            <input type="url" id="setup-api-url" placeholder="https://script.google.com/macros/s/.../exec" required autocomplete="off">
+            <small class="help-text">Ingresa la URL obtenida al implementar tu Web App.</small>
+          </div>
+          <div class="form-group">
+            <label for="setup-user-name">Tu Nombre</label>
+            <input type="text" id="setup-user-name" placeholder="Ej: Papá, Mamá, Sofía" required autocomplete="name">
+          </div>
+          <button type="submit" class="btn btn-primary btn-block">Conectar</button>
+        </form>
+      </main>
+    </div>
+
+    <!-- 2. PANTALLA DE APROBACIÓN PENDIENTE -->
+    <div id="view-pending" class="view">
+      <header class="app-header text-center">
+        <div class="status-icon pending-icon">
+          <span class="material-symbols-rounded">hourglass_empty</span>
+        </div>
+        <h1>Acceso en Espera</h1>
+        <p class="subtitle">Dispositivo registrado. Requiere aprobación del administrador.</p>
+      </header>
+      <main class="view-content text-center">
+        <div class="card pending-card">
+          <p class="text-secondary small">Comparte este identificador con el administrador:</p>
+          <div class="device-token-box">
+            <code id="pending-device-id">Cargando...</code>
+          </div>
+        </div>
+        <button id="btn-check-status" class="btn btn-primary btn-block">Verificar Estado</button>
+        <button id="btn-reset-setup" class="btn btn-secondary btn-block">Desconectar</button>
+      </main>
+    </div>
+
+    <!-- 3. PANTALLA DE BLOQUEO (PIN DE SEGURIDAD) -->
+    <div id="view-pin" class="view">
+      <header class="app-header text-center">
+        <h1>PIN de Acceso</h1>
+        <p class="subtitle" id="pin-prompt-text">Ingresa tu código de seguridad de 4 dígitos</p>
+      </header>
+      <main class="view-content">
+        <div class="pin-display">
+          <div class="pin-dot"></div>
+          <div class="pin-dot"></div>
+          <div class="pin-dot"></div>
+          <div class="pin-dot"></div>
+        </div>
+        
+        <div id="pin-error-msg" class="alert alert-danger hidden">PIN incorrecto. Inténtalo de nuevo.</div>
+
+        <div class="pin-keyboard">
+          <button class="pin-key" data-value="1">1</button>
+          <button class="pin-key" data-value="2">2</button>
+          <button class="pin-key" data-value="3">3</button>
+          <button class="pin-key" data-value="4">4</button>
+          <button class="pin-key" data-value="5">5</button>
+          <button class="pin-key" data-value="6">6</button>
+          <button class="pin-key" data-value="7">7</button>
+          <button class="pin-key" data-value="8">8</button>
+          <button class="pin-key" data-value="9">9</button>
+          <button class="pin-key clear" id="pin-clear">C</button>
+          <button class="pin-key" data-value="0">0</button>
+          <button class="pin-key backspace" id="pin-backspace">
+            <span class="material-symbols-rounded">backspace</span>
+          </button>
+        </div>
+      </main>
+    </div>
+
+    <!-- 4. MENU PRINCIPAL (HOME) -->
+    <div id="view-home" class="view">
+      <header class="app-header navbar-header">
+        <div>
+          <span class="family-label" id="home-family-name">Cargando...</span>
+          <h1 id="home-greeting">Hola, Usuario</h1>
+        </div>
+      </header>
+      <main class="view-content menu-grid">
+        <button class="menu-card" data-target="view-add-movement">
+          <div class="menu-icon icon-add">
+            <span class="material-symbols-rounded">add</span>
+          </div>
+          <div class="menu-info">
+            <h3>Registrar Movimiento</h3>
+            <p>Ingresa egresos, ingresos o ahorros rápidos.</p>
+          </div>
+          <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
+        </button>
+
+        <button class="menu-card" data-target="view-search">
+          <div class="menu-icon icon-search">
+            <span class="material-symbols-rounded">search</span>
+          </div>
+          <div class="menu-info">
+            <h3>Buscar Movimientos</h3>
+            <p>Filtra el historial y edita transacciones.</p>
+          </div>
+          <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
+        </button>
+
+        <button class="menu-card" data-target="view-dashboard">
+          <div class="menu-icon icon-dashboard">
+            <span class="material-symbols-rounded">donut_large</span>
+          </div>
+          <div class="menu-info">
+            <h3>Dashboard</h3>
+            <p>Visualiza tus saldos y gráficos mensuales.</p>
+          </div>
+          <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
+        </button>
+
+        <button class="menu-card admin-only hidden" data-target="view-config" id="menu-btn-config">
+          <div class="menu-icon icon-config">
+            <span class="material-symbols-rounded">settings</span>
+          </div>
+          <div class="menu-info">
+            <h3>Configuración</h3>
+            <p>Administra usuarios, PIN y catálogos en Sheets.</p>
+          </div>
+          <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
+        </button>
+      </main>
+    </div>
+
+    <!-- 5. REGISTRAR / EDITAR MOVIMIENTO -->
+    <div id="view-add-movement" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <h1 id="movement-view-title">Registrar Movimiento</h1>
+      </header>
+      <main class="view-content">
+        <form id="form-movement" class="form-container">
+          <!-- ID oculto para edición -->
+          <input type="hidden" id="mov-id">
+
+          <!-- 1. Fecha -->
+          <div class="form-group">
+            <label for="mov-fecha">Fecha</label>
+            <input type="date" id="mov-fecha" required>
+          </div>
+
+          <!-- 2. Tipo -->
+          <div class="form-group">
+            <label>Tipo de Movimiento</label>
+            <div class="segmented-control">
+              <input type="radio" name="mov-tipo" id="tipo-egreso" value="Egreso" checked>
+              <label for="tipo-egreso">Egreso</label>
+
+              <input type="radio" name="mov-tipo" id="tipo-ingreso" value="Ingreso">
+              <label for="tipo-ingreso">Ingreso</label>
+
+              <input type="radio" name="mov-tipo" id="tipo-ahorro" value="Ahorro">
+              <label for="tipo-ahorro">Ahorro</label>
+            </div>
+          </div>
+
+          <!-- 3. Categoría -->
+          <div class="form-group">
+            <label for="mov-categoria">Categoría</label>
+            <select id="mov-categoria" required>
+              <option value="">Selecciona categoría...</option>
+            </select>
+          </div>
+
+          <!-- 4. Subcategoría -->
+          <div class="form-group">
+            <label for="mov-subcategoria">Subcategoría</label>
+            <select id="mov-subcategoria" required disabled>
+              <option value="">Selecciona subcategoría...</option>
+            </select>
+          </div>
+
+          <!-- CASO ESPECIAL USD (Campos Dinámicos) -->
+          <div id="usd-fields" class="form-group-card hidden">
+            <h4>Compra de Dólares</h4>
+            <div class="form-row">
+              <div class="form-group col-6">
+                <label for="mov-usd-cantidad">Cantidad USD</label>
+                <input type="number" id="mov-usd-cantidad" placeholder="0.00" step="0.01" min="0.01" inputmode="decimal">
+              </div>
+              <div class="form-group col-6">
+                <label for="mov-usd-tc">Tipo de Cambio</label>
+                <input type="number" id="mov-usd-tc" placeholder="0.00" step="0.1" min="0.1" inputmode="decimal">
+              </div>
+            </div>
+          </div>
+
+          <!-- 5. Medio de Pago -->
+          <div class="form-group">
+            <label for="mov-medio-pago">Medio de Pago</label>
+            <select id="mov-medio-pago" required>
+              <option value="">Selecciona medio de pago...</option>
+            </select>
+          </div>
+
+          <!-- 6. Monto -->
+          <div class="form-group">
+            <label for="mov-monto">Monto (Moneda Local)</label>
+            <div class="monto-input-wrapper">
+              <span class="monto-currency">$</span>
+              <input type="number" id="mov-monto" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+            </div>
+          </div>
+
+          <!-- 7. Comentario (Opcional) -->
+          <div class="form-group">
+            <label for="mov-comentario">Comentario</label>
+            <input type="text" id="mov-comentario" placeholder="Escribe un comentario breve..." autocomplete="off">
+          </div>
+
+          <button type="submit" class="btn btn-success btn-block" id="btn-save-movement">Guardar Movimiento</button>
+        </form>
+      </main>
+    </div>
+
+    <!-- PANTALLA DE ÉXITO AL REGISTRAR -->
+    <div id="view-success" class="view">
+      <header class="app-header text-center">
+        <div class="status-icon success-icon">
+          <span class="material-symbols-rounded">check_circle</span>
+        </div>
+        <h1 id="success-title">Operación Completada</h1>
+        <p class="subtitle" id="success-msg">Movimiento registrado correctamente</p>
+      </header>
+      <main class="view-content text-center">
+        <button id="btn-success-again" class="btn btn-primary btn-block">Registrar Otro</button>
+        <button id="btn-success-home" class="btn btn-secondary btn-block">Volver al Inicio</button>
+      </main>
+    </div>
+
+    <!-- 6. BUSCADOR DE MOVIMIENTOS -->
+    <div id="view-search" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <h1>Buscar Movimientos</h1>
+      </header>
+      
+      <!-- Panel de Filtros -->
+      <section class="filter-panel">
+        <details>
+          <summary>
+            <span>Filtros de Búsqueda</span>
+            <span class="material-symbols-rounded">tune</span>
+          </summary>
+          <div class="filter-form">
+            <div class="form-row">
+              <div class="form-group col-6">
+                <label for="filter-date-from">Desde</label>
+                <input type="date" id="filter-date-from">
+              </div>
+              <div class="form-group col-6">
+                <label for="filter-date-to">Hasta</label>
+                <input type="date" id="filter-date-to">
+              </div>
+            </div>
+            <div class="form-row">
+              <div class="form-group col-6">
+                <label for="filter-tipo">Tipo</label>
+                <select id="filter-tipo">
+                  <option value="">Todos</option>
+                  <option value="Ingreso">Ingreso</option>
+                  <option value="Egreso">Egreso</option>
+                  <option value="Ahorro">Ahorro</option>
+                </select>
+              </div>
+              <div class="form-group col-6">
+                <label for="filter-categoria">Categoría</label>
+                <select id="filter-categoria">
+                  <option value="">Todas</option>
+                </select>
+              </div>
+            </div>
+            <div class="form-group">
+              <label for="filter-comentario">Comentario</label>
+              <input type="text" id="filter-comentario" placeholder="Buscar palabras clave...">
+            </div>
+            <button id="btn-apply-filters" class="btn btn-primary btn-block">Filtrar</button>
+          </div>
+        </details>
+      </section>
+
+      <!-- Lista de Movimientos -->
+      <main class="view-content search-list-container">
+        <div id="search-results-info" class="search-info-text">Aplica filtros para buscar movimientos.</div>
+        <div id="search-list" class="transactions-list">
+          <!-- Tarjetas de transacciones cargadas dinámicamente -->
+        </div>
+      </main>
+    </div>
+
+    <!-- 7. DASHBOARD -->
+    <div id="view-dashboard" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <h1>Dashboard Mensual</h1>
+      </header>
+      <main class="view-content">
+        <!-- Saldo Disponible (Principal) -->
+        <section class="kpi-saldo-section">
+          <div class="kpi-saldo-box text-center">
+            <span class="kpi-label">Saldo Disponible</span>
+            <h2 id="kpi-saldo">$ 0.00</h2>
+          </div>
+        </section>
+
+        <!-- KPIs del Mes -->
+        <section class="kpis-section">
+          <div class="kpi-row">
+            <div class="kpi-card kpi-income">
+              <span class="kpi-icon"><span class="material-symbols-rounded">trending_up</span></span>
+              <div class="kpi-info">
+                <span class="kpi-label">Ingresos</span>
+                <span class="kpi-value" id="kpi-ingresos">$ 0.00</span>
+              </div>
+            </div>
+            <div class="kpi-card kpi-expense">
+              <span class="kpi-icon"><span class="material-symbols-rounded">trending_down</span></span>
+              <div class="kpi-info">
+                <span class="kpi-label">Gastos</span>
+                <span class="kpi-value" id="kpi-gastos">$ 0.00</span>
+              </div>
+            </div>
+          </div>
+          <div class="kpi-card kpi-savings">
+            <span class="kpi-icon"><span class="material-symbols-rounded">savings</span></span>
+            <div class="kpi-info">
+              <span class="kpi-label">Ahorro del Mes</span>
+              <span class="kpi-value" id="kpi-ahorro">$ 0.00</span>
+            </div>
+          </div>
+        </section>
+
+        <!-- Gráficos y Desgloses -->
+        <section class="charts-section">
+          <!-- Distribución de Gastos (Dona + Lista Detallada) -->
+          <div class="chart-card">
+            <h4>Gastos por Categoría</h4>
+            <div class="chart-wrapper">
+              <canvas id="chart-categories"></canvas>
+            </div>
+            <!-- Lista desglosada por porcentaje (Revolut style) -->
+            <div id="dashboard-category-details" class="category-percentage-list">
+              <!-- Cargado dinámicamente -->
+            </div>
+          </div>
+
+          <!-- Ranking de Gastos (Subcategorías) -->
+          <div class="chart-card">
+            <h4>Ranking de Gastos (Subcategorías)</h4>
+            <div id="dashboard-ranking-list" class="ranking-list">
+              <!-- Cargado dinámicamente -->
+            </div>
+          </div>
+
+          <!-- Evolución Mensual -->
+          <div class="chart-card">
+            <h4>Evolución Mensual</h4>
+            <div class="chart-wrapper">
+              <canvas id="chart-monthly"></canvas>
+            </div>
+          </div>
+        </section>
+
+        <!-- Últimos 5 movimientos -->
+        <section class="recent-movements-section">
+          <h4>Últimos Movimientos</h4>
+          <div class="transactions-list" id="dashboard-recent-list">
+            <!-- Cargados por JS -->
+          </div>
+        </section>
+      </main>
+    </div>
+
+    <!-- 8. CONFIGURACIÓN (ADMINISTRADOR) -->
+    <div id="view-config" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <h1>Configuración</h1>
+      </header>
+
+      <!-- Selector de Sub-Secciones de Configuración -->
+      <nav class="config-tabs">
+        <button class="config-tab-btn active" data-tab="tab-config-security">Seguridad</button>
+        <button class="config-tab-btn" data-tab="tab-config-users">Usuarios</button>
+        <button class="config-tab-btn" data-tab="tab-config-catalogues">Catálogos</button>
+      </nav>
+
+      <main class="view-content config-tab-container">
+        
+        <!-- Tab Seguridad -->
+        <section id="tab-config-security" class="config-tab-content active">
+          <div class="card">
+            <h3>Configuración General</h3>
+            <form id="form-config-settings" class="form-container">
+              <div class="form-group">
+                <label for="cfg-family-name">Nombre de la Familia</label>
+                <input type="text" id="cfg-family-name" required autocomplete="off">
+              </div>
+              <div class="form-group checkbox-group">
+                <input type="checkbox" id="cfg-pin-active">
+                <label for="cfg-pin-active">Bloqueo por PIN de 4 dígitos activado</label>
+              </div>
+              <div class="form-group" id="cfg-new-pin-group">
+                <label for="cfg-new-pin">Establecer Nuevo PIN (4 dígitos)</label>
+                <input type="password" id="cfg-new-pin" pattern="[0-9]*" inputmode="numeric" maxlength="4" placeholder="Dejar en blanco para no cambiar">
+              </div>
+              <button type="submit" class="btn btn-primary btn-block">Guardar Cambios</button>
+            </form>
+          </div>
+
+          <div class="card danger-zone-card">
+            <h3>Dispositivo Actual</h3>
+            <p class="text-secondary small">Este dispositivo está enlazado a esta planilla. Presiona para desconectarlo.</p>
+            <button id="btn-logout" class="btn btn-danger btn-block">Desconectar Dispositivo</button>
+          </div>
+        </section>
+
+        <!-- Tab Usuarios -->
+        <section id="tab-config-users" class="config-tab-content">
+          <div class="card">
+            <h3>Aprobar y Editar Dispositivos</h3>
+            <p class="text-secondary small">Lista de dispositivos enlazados a tu base de datos.</p>
+            <div id="config-users-list" class="admin-users-list">
+              <!-- Cargado dinámicamente por JS -->
+            </div>
+          </div>
+        </section>
+
+        <!-- Tab Catálogos -->
+        <section id="tab-config-catalogues" class="config-tab-content">
+          <!-- Gestión Categorías -->
+          <div class="card">
+            <h3>Categorías principales</h3>
+            <form id="form-config-category" class="form-container">
+              <input type="hidden" id="cfg-cat-id">
+              <div class="form-group">
+                <label for="cfg-cat-nombre">Nombre Categoría</label>
+                <input type="text" id="cfg-cat-nombre" required placeholder="Ej: Supermercado, Sueldo">
+              </div>
+              <div class="form-group">
+                <label for="cfg-cat-tipo">Tipo</label>
+                <select id="cfg-cat-tipo" required>
+                  <option value="Egreso">Egreso</option>
+                  <option value="Ingreso">Ingreso</option>
+                  <option value="Ahorro">Ahorro</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="cfg-cat-estado">Estado</label>
+                <select id="cfg-cat-estado" required>
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-success btn-block">Guardar Categoría</button>
+            </form>
+            <div class="catalog-list" id="list-cfg-categories"></div>
+          </div>
+
+          <!-- Gestión Subcategorías -->
+          <div class="card">
+            <h3>Subcategorías</h3>
+            <form id="form-config-subcategory" class="form-container">
+              <input type="hidden" id="cfg-sub-id">
+              <div class="form-group">
+                <label for="cfg-sub-cat-id">Categoría Padre</label>
+                <select id="cfg-sub-cat-id" required>
+                  <option value="">Selecciona categoría padre...</option>
+                </select>
+              </div>
+              <div class="form-group">
+                <label for="cfg-sub-nombre">Nombre Subcategoría</label>
+                <input type="text" id="cfg-sub-nombre" required placeholder="Ej: Verdulería, Monotributo">
+              </div>
+              <div class="form-group checkbox-group">
+                <input type="checkbox" id="cfg-sub-usd">
+                <label for="cfg-sub-usd">¿Corresponde a compra/operación USD?</label>
+              </div>
+              <div class="form-group">
+                <label for="cfg-sub-estado">Estado</label>
+                <select id="cfg-sub-estado" required>
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-success btn-block">Guardar Subcategoría</button>
+            </form>
+            <div class="catalog-list" id="list-cfg-subcategories"></div>
+          </div>
+
+          <!-- Gestión Medios de Pago -->
+          <div class="card">
+            <h3>Medios de Pago</h3>
+            <form id="form-config-mp" class="form-container">
+              <input type="hidden" id="cfg-mp-id">
+              <div class="form-group">
+                <label for="cfg-mp-nombre">Nombre del Medio</label>
+                <input type="text" id="cfg-mp-nombre" required placeholder="Ej: Tarjeta Santander, Efectivo ARS">
+              </div>
+              <div class="form-group">
+                <label for="cfg-mp-estado">Estado</label>
+                <select id="cfg-mp-estado" required>
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-success btn-block">Guardar Medio de Pago</button>
+            </form>
+            <div class="catalog-list" id="list-cfg-mp"></div>
+          </div>
+
+        </section>
+
+      </main>
+    </div>
+
+    <!-- INDICADOR DE CARGA GLOBAL -->
+    <div id="global-loader" class="loader-overlay hidden">
+      <div class="spinner"></div>
+      <p id="global-loader-text">Procesando petición...</p>
+    </div>
+
+  </div>
+
+  <!-- Javascript del Frontend -->
+  <script src="app.js"></script>
+</body>
+</html>
