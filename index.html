@@ -356,11 +356,28 @@
               </div>
             </div>
           </div>
-          <div class="kpi-card kpi-savings">
-            <span class="kpi-icon"><span class="material-symbols-rounded">savings</span></span>
+          <div class="kpi-row">
+            <div class="kpi-card kpi-savings col-6">
+              <span class="kpi-icon"><span class="material-symbols-rounded">savings</span></span>
+              <div class="kpi-info">
+                <span class="kpi-label">Ahorro</span>
+                <span class="kpi-value" id="kpi-ahorro">$ 0.00</span>
+              </div>
+            </div>
+            <div class="kpi-card kpi-projected col-6" id="kpi-proyectado-card" style="cursor: pointer;">
+              <span class="kpi-icon"><span class="material-symbols-rounded">pending_actions</span></span>
+              <div class="kpi-info">
+                <span class="kpi-label">Proyectados</span>
+                <span class="kpi-value" id="kpi-proyectado">$ 0.00</span>
+                <small class="click-info">Gestionar ➔</small>
+              </div>
+            </div>
+          </div>
+          <div class="kpi-card kpi-final-projected" id="kpi-saldo-proyectado-card">
+            <span class="kpi-icon"><span class="material-symbols-rounded">calendar_today</span></span>
             <div class="kpi-info">
-              <span class="kpi-label">Ahorro del Mes</span>
-              <span class="kpi-value" id="kpi-ahorro">$ 0.00</span>
+              <span class="kpi-label">Saldo Proyectado Fin de Mes</span>
+              <span class="kpi-value" id="kpi-saldo-proyectado">$ 0.00</span>
             </div>
           </div>
         </section>
@@ -549,6 +566,116 @@
         </section>
 
       </main>
+    </div>
+
+    <!-- 9. PROYECCIONES DE FIN DE MES -->
+    <div id="view-projections" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <h1>Proyecciones Pendientes</h1>
+      </header>
+
+      <!-- Resumen Rápido -->
+      <section class="projections-summary-card card">
+        <div class="summary-item">
+          <span>Saldo Actual</span>
+          <strong id="proj-summary-actual" class="text-success">$ 0.00</strong>
+        </div>
+        <div class="summary-item">
+          <span>Gastos Proyectados</span>
+          <strong id="proj-summary-pending" class="text-danger">$ 0.00</strong>
+        </div>
+        <div class="summary-divider"></div>
+        <div class="summary-item main-projected-item">
+          <span>Saldo Fin de Mes</span>
+          <strong id="proj-summary-final">$ 0.00</strong>
+        </div>
+      </section>
+
+      <!-- Formulario para Agregar/Editar Proyección -->
+      <section class="card" id="card-form-projection">
+        <h3 id="projection-form-title">Agregar Gasto Proyectado</h3>
+        <form id="form-projection" class="form-container">
+          <input type="hidden" id="proj-id">
+          <div class="form-group">
+            <label for="proj-fecha">Fecha Estimada</label>
+            <input type="date" id="proj-fecha" required>
+          </div>
+          <div class="form-group">
+            <label for="proj-concepto">Concepto / Gasto</label>
+            <input type="text" id="proj-concepto" placeholder="Ej: Pago de alquiler, Patente coche" required autocomplete="off">
+          </div>
+          <div class="form-group">
+            <label for="proj-monto">Monto Estimado</label>
+            <div class="monto-input-wrapper">
+              <span class="monto-currency">$</span>
+              <input type="number" id="proj-monto" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+            </div>
+          </div>
+          <div class="form-row">
+            <button type="button" class="btn btn-secondary col-6" id="btn-cancel-projection">Limpiar</button>
+            <button type="submit" class="btn btn-primary col-6" id="btn-save-projection">Guardar</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Listado de Gastos Proyectados -->
+      <main class="view-content mt-4">
+        <h4>Gastos Proyectados Pendientes</h4>
+        <div class="transactions-list" id="projections-list">
+          <!-- Cargados por JS -->
+        </div>
+      </main>
+    </div>
+
+    <!-- MODAL DE PAGO / CONVERSIÓN -->
+    <div id="modal-pay-projection" class="modal-overlay hidden">
+      <div class="modal-content card">
+        <h3>Marcar como Pagado</h3>
+        <p class="text-secondary small" id="pay-proj-concept-text">¿Cómo deseas registrar el pago de este concepto?</p>
+        
+        <form id="form-pay-projection" class="form-container">
+          <input type="hidden" id="pay-proj-id">
+          
+          <div class="form-group checkbox-group">
+            <input type="checkbox" id="pay-proj-convert" checked>
+            <label for="pay-proj-convert"><strong>Convertir a Movimiento Real</strong> en mi planilla</label>
+          </div>
+
+          <!-- Campos de Conversión (Opcionales, se ocultan/muestran en JS) -->
+          <div id="pay-conversion-fields" class="form-group-card">
+            <div class="form-group">
+              <label for="pay-mov-categoria">Categoría</label>
+              <select id="pay-mov-categoria">
+                <option value="">Selecciona categoría...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="pay-mov-subcategoria">Subcategoría</label>
+              <select id="pay-mov-subcategoria" disabled>
+                <option value="">Selecciona subcategoría...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="pay-mov-medio">Medio de Pago</label>
+              <select id="pay-mov-medio">
+                <option value="">Selecciona medio de pago...</option>
+              </select>
+            </div>
+            <div class="form-group">
+              <label for="pay-mov-comentario">Comentario</label>
+              <input type="text" id="pay-mov-comentario" placeholder="Opcional">
+            </div>
+          </div>
+
+          <div class="form-row">
+            <button type="button" class="btn btn-secondary col-6" id="btn-modal-pay-cancel">Cancelar</button>
+            <button type="submit" class="btn btn-success col-6">Confirmar</button>
+          </div>
+        </form>
+      </div>
     </div>
 
     <!-- INDICADOR DE CARGA GLOBAL -->

@@ -8,10 +8,11 @@
 const state = {
   apiUrl: localStorage.getItem("finance_api_url") || "",
   deviceToken: localStorage.getItem("finance_device_token") || "",
-  user: null,         // Datos del usuario actual { nombre, rol }
-  catalog: null,      // Catálogos descargados (categorias, subcategorias, etc.)
-  pinVerified: false, // Control de acceso por PIN
-  editingId: null,    // ID del movimiento que se está editando
+  user: null,              // Datos del usuario actual { nombre, rol }
+  catalog: null,           // Catálogos descargados (categorias, subcategorias, etc.)
+  pinVerified: false,      // Control de acceso por PIN
+  editingId: null,         // ID del movimiento que se está editando
+  lastDashboardKpis: null, // Último conjunto de KPIs del dashboard para uso en otras vistas
   charts: {
     categories: null,
     monthly: null
@@ -45,10 +46,15 @@ async function bootApp() {
     if (response.success) {
       state.catalog = response.data;
       
-      // Intentar recuperar el perfil de usuario (se obtiene al verificar o guardar en local)
-      const cachedUser = localStorage.getItem("finance_user");
-      if (cachedUser) {
-        state.user = JSON.parse(cachedUser);
+      // Sincronizar dinámicamente el perfil del usuario activo retornado por la API
+      if (response.data.user) {
+        state.user = response.data.user;
+        localStorage.setItem("finance_user", JSON.stringify(state.user));
+      } else {
+        const cachedUser = localStorage.getItem("finance_user");
+        if (cachedUser) {
+          state.user = JSON.parse(cachedUser);
+        }
       }
 
       // Inicializar etiquetas del dashboard/menú
@@ -62,10 +68,10 @@ async function bootApp() {
       }
     } else {
       // Manejar estados específicos de autorización
-      if (response.errorCode === "ERR_DEVICE_PENDING") {
+      if (response.errorCode === "ERR_DEVICE_PENDING" || (response.message && response.message.includes("ERR_DEVICE_PENDING"))) {
         document.getElementById("pending-device-id").innerText = state.deviceToken.substring(0, 8).toUpperCase();
         showView("view-pending");
-      } else if (response.errorCode === "ERR_DEVICE_NOT_FOUND") {
+      } else if (response.errorCode === "ERR_DEVICE_NOT_FOUND" || (response.message && response.message.includes("ERR_DEVICE_NOT_FOUND"))) {
         // Dispositivo borrado en Sheets, resetear local
         alert("Este dispositivo ha sido desvinculado por el administrador.");
         logout();
@@ -129,6 +135,9 @@ function showView(viewId) {
       loadDashboardData();
     } else if (viewId === "view-config") {
       loadAdminConsole();
+    } else if (viewId === "view-projections") {
+      resetProjectionForm();
+      loadProjectionsView();
     }
   }
 }
@@ -142,6 +151,10 @@ async function refreshCatalogSilently() {
     const response = await apiRequest("getUiCatalogues");
     if (response.success) {
       state.catalog = response.data;
+      if (response.data.user) {
+        state.user = response.data.user;
+        localStorage.setItem("finance_user", JSON.stringify(state.user));
+      }
       updateUiMeta();
     }
   } catch (error) {
@@ -761,24 +774,28 @@ async function loadDashboardData() {
 }
 
 function renderDashboard(data) {
-  // 1. Renderizar KPIs
+  // 1. Renderizar KPIs principales
   const kpis = data.kpis;
+  state.lastDashboardKpis = kpis; // Guardar para uso en vista de Proyecciones
   document.getElementById("kpi-saldo").innerText = Utils.formatCurrency(kpis.saldo);
   document.getElementById("kpi-ingresos").innerText = Utils.formatCurrency(kpis.ingresosMes);
   document.getElementById("kpi-gastos").innerText = Utils.formatCurrency(kpis.gastosMes);
   document.getElementById("kpi-ahorro").innerText = Utils.formatCurrency(kpis.ahorroMes);
 
-  // Colorear saldo
-  const saldoCard = document.getElementById("kpi-saldo-card");
-  if (kpis.saldo < 0) {
-    saldoCard.style.backgroundColor = "#fce8e6";
-    saldoCard.style.borderColor = "#fad2cf";
-    document.getElementById("kpi-saldo").style.color = "var(--danger-color)";
-  } else {
-    saldoCard.style.backgroundColor = "#e8f0fe";
-    saldoCard.style.borderColor = "#aecbfa";
-    document.getElementById("kpi-saldo").style.color = "var(--primary-color)";
-  }
+  // Nuevos KPIs de Proyecciones
+  const gastosProyectados = kpis.gastosProyectados || 0;
+  const saldoProyectado = kpis.saldoProyectado != null ? kpis.saldoProyectado : kpis.saldo;
+  document.getElementById("kpi-proyectado").innerText = Utils.formatCurrency(gastosProyectados);
+  document.getElementById("kpi-saldo-proyectado").innerText = Utils.formatCurrency(saldoProyectado);
+
+  // Colorear saldo disponible (positivo/negativo)
+  const saldoEl = document.getElementById("kpi-saldo");
+  saldoEl.className = kpis.saldo < 0 ? "negative" : "positive";
+  document.querySelector(".kpi-saldo-box").style.borderColor = kpis.saldo < 0 ? "#f8d7da" : "#d1e7dd";
+
+  // Colorear saldo proyectado
+  const saldoProjEl = document.getElementById("kpi-saldo-proyectado");
+  saldoProjEl.style.color = saldoProyectado < 0 ? "var(--danger-color)" : "var(--success-color)";
 
   // 2. Gráfico por Categorías (Dona)
   const catChartData = data.categoriaChart;
@@ -788,16 +805,14 @@ function renderDashboard(data) {
     state.charts.categories.destroy();
   }
 
+  const CHART_COLORS = ["#1a73e8", "#0d9488", "#f9ab00", "#d93025", "#a142f4", "#e37400", "#137333", "#0b57d0", "#c5221f", "#185abc"];
+
   if (catChartData.length === 0) {
-    // Si no hay egresos, dibujar gráfico vacío explicativo
     state.charts.categories = new Chart(catCanvas, {
       type: "doughnut",
       data: {
-        labels: ["Sin egresos"],
-        datasets: [{
-          data: [1],
-          backgroundColor: ["#e8eaed"]
-        }]
+        labels: ["Sin egresos este mes"],
+        datasets: [{ data: [1], backgroundColor: ["#e8eaed"] }]
       },
       options: {
         responsive: true,
@@ -805,6 +820,7 @@ function renderDashboard(data) {
         plugins: { legend: { display: true, position: "bottom" } }
       }
     });
+    document.getElementById("dashboard-category-details").innerHTML = "<p class=\"text-secondary small text-center\">No hay egresos este mes.</p>";
   } else {
     state.charts.categories = new Chart(catCanvas, {
       type: "doughnut",
@@ -812,20 +828,46 @@ function renderDashboard(data) {
         labels: catChartData.map(c => c.categoria),
         datasets: [{
           data: catChartData.map(c => c.monto),
-          backgroundColor: ["#1a73e8", "#129eaf", "#f9ab00", "#d93025", "#a142f4", "#e37400", "#137333"]
+          backgroundColor: CHART_COLORS
         }]
       },
       options: {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: true, position: "bottom", labels: { boxWidth: 12 } }
+          legend: { display: true, position: "bottom", labels: { boxWidth: 12, font: { size: 12 } } }
         }
       }
     });
+
+    // Tabla desglosada de Categorías (Revolut Style)
+    const totalGastos = catChartData.reduce((sum, c) => sum + c.monto, 0);
+    const catDetails = document.getElementById("dashboard-category-details");
+    catDetails.innerHTML = "";
+    catChartData.forEach((c, idx) => {
+      const pct = totalGastos > 0 ? ((c.monto / totalGastos) * 100).toFixed(1) : "0.0";
+      const color = CHART_COLORS[idx % CHART_COLORS.length];
+      catDetails.innerHTML += `
+        <div class="percentage-item">
+          <div class="percentage-header">
+            <span class="percentage-label" style="display:flex;align-items:center;gap:8px;">
+              <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+              ${c.categoria}
+            </span>
+            <span class="percentage-values"><strong>${Utils.formatCurrency(c.monto)}</strong> ${pct}%</span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width:${pct}%;background:${color};"></div>
+          </div>
+        </div>`;
+    });
   }
 
-  // 3. Gráfico Histórico Mensual (Barras)
+  // 3. Ranking de Subcategorías del Mes (calculado desde el acumulado del mes que proviene del backend)
+  const rankingContainer = document.getElementById("dashboard-ranking-list");
+  renderSubcategoryRanking(rankingContainer, data.subcategoriaChart || []);
+
+  // 4. Gráfico Histórico Mensual (Barras)
   const monthlyData = data.mensualChart;
   const monthlyCanvas = document.getElementById("chart-monthly");
 
@@ -838,38 +880,55 @@ function renderDashboard(data) {
     data: {
       labels: monthlyData.map(m => m.mes),
       datasets: [
-        {
-          label: "Ingresos",
-          data: monthlyData.map(m => m.ingresos),
-          backgroundColor: "#1e8e3e"
-        },
-        {
-          label: "Gastos",
-          data: monthlyData.map(m => m.gastos),
-          backgroundColor: "#d93025"
-        },
-        {
-          label: "Ahorros",
-          data: monthlyData.map(m => m.ahorros),
-          backgroundColor: "#129eaf"
-        }
+        { label: "Ingresos", data: monthlyData.map(m => m.ingresos), backgroundColor: "#198754" },
+        { label: "Gastos", data: monthlyData.map(m => m.gastos), backgroundColor: "#dc3545" },
+        { label: "Ahorros", data: monthlyData.map(m => m.ahorros), backgroundColor: "#0d9488" }
       ]
     },
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      scales: {
-        y: { beginAtZero: true }
-      },
+      scales: { y: { beginAtZero: true, ticks: { font: { size: 11 } } } },
       plugins: {
-        legend: { display: true, position: "bottom", labels: { boxWidth: 12 } }
+        legend: { display: true, position: "bottom", labels: { boxWidth: 12, font: { size: 12 } } }
       }
     }
   });
 
-  // 4. Últimos Movimientos
+  // 5. Últimos Movimientos
   renderDashboardRecentList(data.ultimosMovimientos);
 }
+
+/**
+ * Renderiza el ranking de subcategorías (Top 5) con barras de progreso.
+ * Construido a partir del desglose mensual provisto por el backend.
+ */
+function renderSubcategoryRanking(container, subcatChartData) {
+  if (!subcatChartData || subcatChartData.length === 0) {
+    container.innerHTML = "<p class=\"text-secondary small text-center\">No hay egresos este mes para el ranking.</p>";
+    return;
+  }
+
+  const sorted = subcatChartData.slice(0, 5);
+  const maxVal = sorted.length > 0 ? sorted[0].monto : 1;
+
+  container.innerHTML = "";
+  const RANK_COLORS = ["#1a73e8", "#0d9488", "#f9ab00", "#d93025", "#a142f4"];
+  sorted.forEach((item, idx) => {
+    const pct = maxVal > 0 ? ((item.monto / maxVal) * 100).toFixed(0) : 0;
+    container.innerHTML += `
+      <div class="ranking-item">
+        <div class="ranking-header">
+          <span class="ranking-label">${item.subcategoria}</span>
+          <span class="ranking-value" style="color:${RANK_COLORS[idx % RANK_COLORS.length]}">${Utils.formatCurrency(item.monto)}</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" style="width:${pct}%;background:${RANK_COLORS[idx % RANK_COLORS.length]};"></div>
+        </div>
+      </div>`;
+  });
+}
+
 
 function renderDashboardRecentList(items) {
   const container = document.getElementById("dashboard-recent-list");
@@ -1320,6 +1379,326 @@ function initEventListeners() {
       }
     );
   });
+
+  // Dashboard: card de Proyectados → ir a gestionar proyecciones
+  document.getElementById("kpi-proyectado-card").addEventListener("click", () => {
+    showView("view-projections");
+  });
+
+  // Proyecciones: formulario de guardado
+  document.getElementById("form-projection").addEventListener("submit", handleSaveProjection);
+
+  // Proyecciones: botón limpiar/cancelar edición
+  document.getElementById("btn-cancel-projection").addEventListener("click", resetProjectionForm);
+
+  // Modal de pago: toggle campos de conversión
+  document.getElementById("pay-proj-convert").addEventListener("change", (e) => {
+    document.getElementById("pay-conversion-fields").style.display = e.target.checked ? "flex" : "none";
+  });
+
+  // Modal de pago: categoría→subcategoría en cascada
+  document.getElementById("pay-mov-categoria").addEventListener("change", (e) => {
+    const catSelect = e.target;
+    const selectedOpt = catSelect.options[catSelect.selectedIndex];
+    const subSelect = document.getElementById("pay-mov-subcategoria");
+    subSelect.innerHTML = '<option value="">Selecciona subcategoría...</option>';
+    subSelect.disabled = true;
+
+    if (!selectedOpt || !selectedOpt.dataset.id) return;
+    const catId = selectedOpt.dataset.id;
+    const filtered = (state.catalog.subcategories || []).filter(s => s.ID_CATEGORIA === catId && s.ESTADO === "Activo");
+    if (filtered.length > 0) {
+      filtered.forEach(s => {
+        const opt = document.createElement("option");
+        opt.value = s.NOMBRE;
+        opt.dataset.id = s.ID_SUBCATEGORIA;
+        opt.textContent = s.NOMBRE;
+        subSelect.appendChild(opt);
+      });
+      subSelect.disabled = false;
+    }
+  });
+
+  // Modal de pago: cancelar
+  document.getElementById("btn-modal-pay-cancel").addEventListener("click", () => {
+    document.getElementById("modal-pay-projection").classList.add("hidden");
+  });
+
+  // Modal de pago: confirmar pago
+  document.getElementById("form-pay-projection").addEventListener("submit", handlePayProjection);
+}
+
+// ==========================================================================
+// PROYECCIONES DE FIN DE MES
+// ==========================================================================
+
+/**
+ * Carga y renderiza la vista de proyecciones.
+ * Se almacena el saldo actual en estado para poder mostrarlo en la vista.
+ */
+async function loadProjectionsView() {
+  showLoader("Cargando proyecciones...");
+  try {
+    const response = await apiRequest("getProjections");
+    if (response.success) {
+      renderProjectionsList(response.data || []);
+    } else {
+      alert("Error al cargar proyecciones: " + response.message);
+    }
+  } catch (error) {
+    alert("Error de conexión al cargar proyecciones.");
+  } finally {
+    hideLoader();
+  }
+  
+  // Actualizar resumen de saldo en vista proyecciones usando datos del estado
+  // (se poblan cuando se carga el dashboard; si no están disponibles, ocultamos)
+  if (state.lastDashboardKpis) {
+    const kpis = state.lastDashboardKpis;
+    document.getElementById("proj-summary-actual").innerText = Utils.formatCurrency(kpis.saldo);
+    document.getElementById("proj-summary-pending").innerText = Utils.formatCurrency(kpis.gastosProyectados || 0);
+    const saldoFin = kpis.saldoProyectado != null ? kpis.saldoProyectado : kpis.saldo;
+    const finalEl = document.getElementById("proj-summary-final");
+    finalEl.innerText = Utils.formatCurrency(saldoFin);
+    finalEl.style.color = saldoFin < 0 ? "var(--danger-color)" : "var(--primary-color)";
+  }
+}
+
+/**
+ * Renderiza la lista de proyecciones pendientes.
+ */
+function renderProjectionsList(items) {
+  const container = document.getElementById("projections-list");
+  container.innerHTML = "";
+
+  const pendientes = items.filter(p => p.ESTADO === "Pendiente");
+
+  if (pendientes.length === 0) {
+    container.innerHTML = '<div class="text-center text-secondary py-4" style="padding:24px 0;">No hay gastos proyectados pendientes.</div>';
+    return;
+  }
+
+  pendientes.forEach(item => {
+    const card = document.createElement("div");
+    card.className = "transaction-card";
+    const fechaStr = item.FECHA ? Utils.formatDateReadable(item.FECHA) : "Sin fecha";
+    card.innerHTML = `
+      <div class="tx-icon tx-egreso">
+        <span class="material-symbols-rounded" style="font-size:20px;">pending_actions</span>
+      </div>
+      <div class="tx-main">
+        <div class="tx-header">
+          <span class="tx-category">${item.CONCEPTO || "Sin concepto"}</span>
+        </div>
+        <div class="tx-meta">${fechaStr}</div>
+        <div class="proj-actions">
+          <button class="btn-proj-pay" data-id="${item.ID}" data-concepto="${item.CONCEPTO}" data-monto="${item.MONTO}">✓ Pagar</button>
+          <button class="btn-edit-tx btn-proj-edit" data-id="${item.ID}" data-fecha="${item.FECHA}" data-concepto="${item.CONCEPTO}" data-monto="${item.MONTO}">Editar</button>
+          <button class="btn-proj-delete" data-id="${item.ID}">Eliminar</button>
+        </div>
+      </div>
+      <div class="tx-right">
+        <span class="tx-amount egreso">-${Utils.formatCurrency(item.MONTO)}</span>
+        <span class="proj-pendiente-badge">Pendiente</span>
+      </div>
+    `;
+
+    // Editar proyección
+    card.querySelector(".btn-proj-edit").addEventListener("click", () => {
+      document.getElementById("proj-id").value = item.ID;
+      document.getElementById("proj-fecha").value = item.FECHA ? item.FECHA.toString().substring(0, 10) : "";
+      document.getElementById("proj-concepto").value = item.CONCEPTO;
+      document.getElementById("proj-monto").value = parseFloat(item.MONTO).toFixed(2);
+      document.getElementById("projection-form-title").innerText = "Editar Gasto Proyectado";
+      document.getElementById("btn-save-projection").innerText = "Actualizar";
+      card.closest(".view-content") && card.closest(".view-content").scrollTo(0, 0);
+      document.getElementById("card-form-projection").scrollIntoView({ behavior: "smooth" });
+    });
+
+    // Pagar proyección
+    card.querySelector(".btn-proj-pay").addEventListener("click", () => {
+      openPayModal(item.ID, item.CONCEPTO, item.MONTO);
+    });
+
+    // Eliminar proyección
+    card.querySelector(".btn-proj-delete").addEventListener("click", () => {
+      handleDeleteProjection(item.ID, item.CONCEPTO);
+    });
+
+    container.appendChild(card);
+  });
+}
+
+/**
+ * Resetea el formulario de Proyección al estado inicial (nuevo).
+ */
+function resetProjectionForm() {
+  document.getElementById("proj-id").value = "";
+  document.getElementById("proj-fecha").value = Utils.getTodayDateString();
+  document.getElementById("proj-concepto").value = "";
+  document.getElementById("proj-monto").value = "";
+  document.getElementById("projection-form-title").innerText = "Agregar Gasto Proyectado";
+  document.getElementById("btn-save-projection").innerText = "Guardar";
+}
+
+/**
+ * Envía el formulario para crear o actualizar una proyección.
+ */
+async function handleSaveProjection(e) {
+  e.preventDefault();
+  const id = document.getElementById("proj-id").value;
+  const fecha = document.getElementById("proj-fecha").value;
+  const concepto = document.getElementById("proj-concepto").value.trim();
+  const monto = parseFloat(document.getElementById("proj-monto").value);
+
+  if (!fecha || !concepto || isNaN(monto) || monto <= 0) {
+    alert("Completa todos los campos con valores válidos.");
+    return;
+  }
+
+  showLoader(id ? "Actualizando proyección..." : "Guardando proyección...");
+  try {
+    const payload = { fecha, concepto, monto };
+    if (id) payload.id = id;
+
+    const response = await apiRequest("saveProjection", payload);
+    if (response.success) {
+      resetProjectionForm();
+      loadProjectionsView();
+    } else {
+      alert("Error: " + response.message);
+    }
+  } catch (error) {
+    alert("Error de conexión al guardar proyección.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Elimina una proyección tras confirmación del usuario.
+ */
+async function handleDeleteProjection(id, concepto) {
+  if (!confirm(`¿Confirmas eliminar el gasto proyectado "${concepto}"?`)) return;
+
+  showLoader("Eliminando...");
+  try {
+    const response = await apiRequest("deleteProjection", { id });
+    if (response.success) {
+      loadProjectionsView();
+    } else {
+      alert("Error: " + response.message);
+    }
+  } catch (error) {
+    alert("Error de conexión al eliminar proyección.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Abre el modal de confirmación de pago.
+ */
+function openPayModal(id, concepto, monto) {
+  document.getElementById("pay-proj-id").value = id;
+  document.getElementById("pay-proj-concept-text").innerText = `"${concepto}" — ${Utils.formatCurrency(monto)}`;
+  document.getElementById("pay-proj-convert").checked = true;
+  document.getElementById("pay-conversion-fields").style.display = "flex";
+  document.getElementById("pay-mov-comentario").value = concepto;
+
+  // Poblar selectores de categoría y medio de pago en el modal
+  initPayConversionSelects();
+
+  document.getElementById("modal-pay-projection").classList.remove("hidden");
+}
+
+/**
+ * Inicializa los selectores de Categoría y Medio de Pago en el modal de pago.
+ */
+function initPayConversionSelects() {
+  const catSelect = document.getElementById("pay-mov-categoria");
+  catSelect.innerHTML = '<option value="">Selecciona categoría...</option>';
+  const subSelect = document.getElementById("pay-mov-subcategoria");
+  subSelect.innerHTML = '<option value="">Selecciona subcategoría...</option>';
+  subSelect.disabled = true;
+  const medioSelect = document.getElementById("pay-mov-medio");
+  medioSelect.innerHTML = '<option value="">Selecciona medio de pago...</option>';
+
+  if (!state.catalog) return;
+
+  // Solo categorías de Egreso (las proyecciones son gastos)
+  const egressCats = (state.catalog.categories || []).filter(c => c.TIPO === "Egreso" && c.ESTADO === "Activo");
+  egressCats.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.NOMBRE;
+    opt.dataset.id = c.ID_CATEGORIA;
+    opt.textContent = c.NOMBRE;
+    catSelect.appendChild(opt);
+  });
+
+  (state.catalog.paymentMethods || []).filter(mp => mp.ESTADO === "Activo").forEach(mp => {
+    const opt = document.createElement("option");
+    opt.value = mp.NOMBRE;
+    opt.textContent = mp.NOMBRE;
+    medioSelect.appendChild(opt);
+  });
+}
+
+/**
+ * Procesa el pago de una proyección (con o sin conversión a movimiento real).
+ */
+async function handlePayProjection(e) {
+  e.preventDefault();
+  const id = document.getElementById("pay-proj-id").value;
+  const convertToMovement = document.getElementById("pay-proj-convert").checked;
+
+  const payload = { id, convertToMovement };
+
+  if (convertToMovement) {
+    const categoria = document.getElementById("pay-mov-categoria").value;
+    const subcategoria = document.getElementById("pay-mov-subcategoria").value;
+    const medioPago = document.getElementById("pay-mov-medio").value;
+    const comentario = document.getElementById("pay-mov-comentario").value.trim();
+
+    if (!categoria || !subcategoria || !medioPago) {
+      alert("Para convertir a movimiento real debes seleccionar Categoría, Subcategoría y Medio de Pago.");
+      return;
+    }
+
+    // Recuperar el concepto y monto del modal para el movimiento real
+    const conceptText = document.getElementById("pay-proj-concept-text").innerText;
+    // El monto lo recuperamos del id de la proyección — no tenemos state local, así que usamos el concepto
+    payload.movement = {
+      fecha: Utils.getTodayDateString(),
+      tipo: "Egreso",
+      categoria,
+      subcategoria,
+      medioPago,
+      monto: null, // Se completará con el monto del registro en el backend
+      comentario
+    };
+
+    // Para poder enviar el monto correcto, lo buscamos en la lista renderizada
+    const payBtn = document.querySelector(`.btn-proj-pay[data-id="${id}"]`);
+    if (payBtn && payBtn.dataset.monto) {
+      payload.movement.monto = parseFloat(payBtn.dataset.monto);
+    }
+  }
+
+  showLoader("Procesando pago...");
+  try {
+    const response = await apiRequest("payProjection", payload);
+    if (response.success) {
+      document.getElementById("modal-pay-projection").classList.add("hidden");
+      loadProjectionsView();
+    } else {
+      alert("Error: " + response.message);
+    }
+  } catch (error) {
+    alert("Error de conexión al procesar el pago.");
+  } finally {
+    hideLoader();
+  }
 }
 
 // ==========================================================================
@@ -1337,6 +1716,12 @@ const Utils = {
 
   formatDateInput: function(fechaStr) {
     if (!fechaStr) return "";
+    if (typeof fechaStr === "string" && fechaStr.includes("-")) {
+      const parts = fechaStr.substring(0, 10).split("-");
+      if (parts.length === 3) {
+        return `${parts[0]}-${parts[1].padStart(2, '0')}-${parts[2].padStart(2, '0')}`;
+      }
+    }
     const date = new Date(fechaStr);
     if (isNaN(date.getTime())) return "";
     const yyyy = date.getFullYear();
@@ -1347,6 +1732,13 @@ const Utils = {
 
   formatDateReadable: function(fechaStr) {
     if (!fechaStr) return "";
+    if (typeof fechaStr === "string" && fechaStr.includes("-")) {
+      const parts = fechaStr.substring(0, 10).split("-");
+      if (parts.length === 3) {
+        const d = new Date(parseInt(parts[0], 10), parseInt(parts[1], 10) - 1, parseInt(parts[2], 10));
+        return d.toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
+      }
+    }
     const date = new Date(fechaStr);
     if (isNaN(date.getTime())) return fechaStr;
     return date.toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
