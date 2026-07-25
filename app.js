@@ -4,10 +4,66 @@
  * ==========================================================================
  */
 
+// AUXILIARES DE ALMACENAMIENTO PERSISTENTE MULTI-CAPA (localStorage + sessionStorage + Cookie)
+function setCookie(name, value, days) {
+  try {
+    const date = new Date();
+    date.setTime(date.getTime() + (days * 24 * 60 * 60 * 1000));
+    const expires = "; expires=" + date.toUTCString();
+    document.cookie = name + "=" + (encodeURIComponent(value) || "") + expires + "; path=/; SameSite=Lax";
+  } catch (e) {}
+}
+
+function getCookie(name) {
+  try {
+    const nameEQ = name + "=";
+    const ca = document.cookie.split(';');
+    for (let i = 0; i < ca.length; i++) {
+      let c = ca[i];
+      while (c.charAt(0) === ' ') c = c.substring(1, c.length);
+      if (c.indexOf(nameEQ) === 0) return decodeURIComponent(c.substring(nameEQ.length, c.length));
+    }
+  } catch (e) {}
+  return "";
+}
+
+function clearCookie(name) {
+  try {
+    document.cookie = name + "=; expires=Thu, 01 Jan 1970 00:00:00 UTC; path=/;";
+  } catch (e) {}
+}
+
+function getStoredItem(key) {
+  try {
+    let val = localStorage.getItem(key);
+    if (val) return val;
+  } catch (e) {}
+  try {
+    let val = sessionStorage.getItem(key);
+    if (val) return val;
+  } catch (e) {}
+  return getCookie(key) || "";
+}
+
+function setStoredItem(key, value) {
+  try { localStorage.setItem(key, value); } catch (e) {}
+  try { sessionStorage.setItem(key, value); } catch (e) {}
+  setCookie(key, value, 365);
+}
+
+function clearStoredItems() {
+  try { localStorage.clear(); } catch (e) {}
+  try { sessionStorage.clear(); } catch (e) {}
+  clearCookie("finance_api_url");
+  clearCookie("finance_device_token");
+  clearCookie("finance_user");
+  clearCookie("finance_user_name");
+}
+
 // ESTADO GLOBAL DE LA APLICACIÓN
 const state = {
-  apiUrl: localStorage.getItem("finance_api_url") || "",
-  deviceToken: localStorage.getItem("finance_device_token") || "",
+  apiUrl: getStoredItem("finance_api_url") || "",
+  deviceToken: getStoredItem("finance_device_token") || "",
   user: null,              // Datos del usuario actual { nombre, rol }
   catalog: null,           // Catálogos descargados (categorias, subcategorias, etc.)
   pinVerified: false,      // Control de acceso por PIN
@@ -32,7 +88,12 @@ document.addEventListener("DOMContentLoaded", () => {
  * Arranca la aplicación comprobando credenciales locales y estado.
  */
 async function bootApp() {
+  // Asegurar la sincronización de credenciales persistentes
+  state.apiUrl = state.apiUrl || getStoredItem("finance_api_url");
+  state.deviceToken = state.deviceToken || getStoredItem("finance_device_token");
+
   if (!state.apiUrl || !state.deviceToken) {
+    prefillSetupForm();
     showView("view-setup");
     return;
   }
@@ -49,11 +110,12 @@ async function bootApp() {
       // Sincronizar dinámicamente el perfil del usuario activo retornado por la API
       if (response.data.user) {
         state.user = response.data.user;
-        localStorage.setItem("finance_user", JSON.stringify(state.user));
+        setStoredItem("finance_user", JSON.stringify(state.user));
+        setStoredItem("finance_user_name", state.user.nombre);
       } else {
-        const cachedUser = localStorage.getItem("finance_user");
+        const cachedUser = getStoredItem("finance_user");
         if (cachedUser) {
-          state.user = JSON.parse(cachedUser);
+          try { state.user = JSON.parse(cachedUser); } catch(e) {}
         }
       }
 
@@ -72,21 +134,41 @@ async function bootApp() {
         document.getElementById("pending-device-id").innerText = state.deviceToken.substring(0, 8).toUpperCase();
         showView("view-pending");
       } else if (response.errorCode === "ERR_DEVICE_NOT_FOUND" || (response.message && response.message.includes("ERR_DEVICE_NOT_FOUND"))) {
-        // Dispositivo borrado en Sheets, resetear local
-        alert("Este dispositivo ha sido desvinculado por el administrador.");
-        logout();
+        // Dispositivo borrado en Sheets o no encontrado
+        if (confirm("Este dispositivo no figura registrado en la planilla. ¿Deseas desconectarlo para volver a vincularlo?")) {
+          logout();
+        } else {
+          prefillSetupForm();
+          showView("view-setup");
+        }
       } else {
         alert("Error de conexión con la planilla: " + response.message);
+        prefillSetupForm();
         showView("view-setup");
       }
     }
   } catch (error) {
     console.error(error);
     alert("No se pudo conectar con la API. Verifica tu conexión a internet o la URL ingresada.");
+    prefillSetupForm();
     showView("view-setup");
   } finally {
     hideLoader();
   }
+}
+
+/**
+ * Pre-llena los inputs del formulario de vinculación si ya existen credenciales guardadas.
+ */
+function prefillSetupForm() {
+  const savedUrl = getStoredItem("finance_api_url") || state.apiUrl;
+  const savedName = getStoredItem("finance_user_name") || (state.user ? state.user.nombre : "");
+  
+  const urlInput = document.getElementById("setup-api-url");
+  const nameInput = document.getElementById("setup-user-name");
+  
+  if (urlInput && savedUrl) urlInput.value = savedUrl;
+  if (nameInput && savedName) nameInput.value = savedName;
 }
 
 /**
@@ -216,30 +298,32 @@ async function handleSetupSubmit(e) {
 
   showLoader("Vinculando dispositivo...");
 
-  // Generar token UUID único para el cliente si no existe
-  const token = state.deviceToken || generateUUID();
+  // REUTILIZAR SIEMPRE el token de dispositivo existente de este navegador/PC
+  // para NO generar usuarios duplicados ("PC 2", "PC 3"...) en la planilla.
+  const token = getStoredItem("finance_device_token") || state.deviceToken || generateUUID();
 
   try {
-    // Configurar API temporal en el estado para probar la llamada
+    // Configurar API en el estado para la llamada
     state.apiUrl = url;
     state.deviceToken = token;
 
     const response = await apiRequest("registerDevice", { nombre: nombre });
 
     if (response.success) {
-      // Guardar permanentemente en localStorage
-      localStorage.setItem("finance_api_url", url);
-      localStorage.setItem("finance_device_token", token);
+      // Guardar en almacenamiento persistente multi-capa (localStorage + sessionStorage + Cookie)
+      setStoredItem("finance_api_url", url);
+      setStoredItem("finance_device_token", token);
+      setStoredItem("finance_user_name", nombre);
       
       const userProfile = {
-        nombre: nombre,
+        nombre: response.data.nombre || nombre,
         rol: response.data.rol
       };
-      localStorage.setItem("finance_user", JSON.stringify(userProfile));
+      setStoredItem("finance_user", JSON.stringify(userProfile));
       state.user = userProfile;
 
       if (response.data.status === "approved") {
-        state.pinVerified = true; // Auto-aprobado admin inicial no requiere PIN inmediato
+        state.pinVerified = true;
         bootApp();
       } else {
         document.getElementById("pending-device-id").innerText = token.substring(0, 8).toUpperCase();
@@ -257,13 +341,14 @@ async function handleSetupSubmit(e) {
 }
 
 function logout() {
-  localStorage.clear();
+  clearStoredItems();
   state.apiUrl = "";
   state.deviceToken = "";
   state.user = null;
   state.catalog = null;
   state.pinVerified = false;
   state.editingId = null;
+  prefillSetupForm();
   showView("view-setup");
 }
 
