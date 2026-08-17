@@ -64,6 +64,7 @@ function clearStoredItems() {
 const state = {
   apiUrl: getStoredItem("finance_api_url") || "",
   deviceToken: getStoredItem("finance_device_token") || "",
+  currentPin: getStoredItem("finance_user_pin") || "0000", // Clave local de cifrado E2EE
   user: null,              // Datos del usuario actual { nombre, rol }
   catalog: null,           // Catálogos descargados (categorias, subcategorias, etc.)
   pinVerified: false,      // Control de acceso por PIN
@@ -72,6 +73,127 @@ const state = {
   charts: {
     categories: null,
     monthly: null
+  }
+};
+
+// ==========================================================================
+// MÓDULO CRIPTOGRÁFICO DE EXTREMO A EXTREMO (E2EE - ZERO KNOWLEDGE)
+// ==========================================================================
+const CryptoUtils = {
+  PREFIX: "ENC:",
+
+  /**
+   * Obtiene la clave de cifrado activa del cliente.
+   */
+  getPin() {
+    return state.currentPin || getStoredItem("finance_user_pin") || "0000";
+  },
+
+  /**
+   * Deriva una clave AES-GCM 256-bit a partir de la clave del cliente usando SHA-256.
+   */
+  async _deriveKey(pin) {
+    const encoder = new TextEncoder();
+    const pinData = encoder.encode(String(pin || "0000"));
+    const hashBuffer = await window.crypto.subtle.digest("SHA-256", pinData);
+    return await window.crypto.subtle.importKey(
+      "raw",
+      hashBuffer,
+      { name: "AES-GCM" },
+      false,
+      ["encrypt", "decrypt"]
+    );
+  },
+
+  /**
+   * Cifra un texto o número de forma segura en el navegador antes de enviar al servidor.
+   */
+  async encrypt(value, customPin) {
+    if (value === null || value === undefined || value === "") return "";
+    const strVal = String(value);
+
+    // Si ya viene cifrado, evitar doble cifrado
+    if (strVal.startsWith(this.PREFIX)) return strVal;
+
+    try {
+      const pin = customPin || this.getPin();
+      const key = await this._deriveKey(pin);
+      const iv = window.crypto.getRandomValues(new Uint8Array(12));
+      const encoder = new TextEncoder();
+      const encodedData = encoder.encode(strVal);
+
+      const encryptedBuffer = await window.crypto.subtle.encrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        encodedData
+      );
+
+      const combined = new Uint8Array(iv.length + encryptedBuffer.byteLength);
+      combined.set(iv, 0);
+      combined.set(new Uint8Array(encryptedBuffer), iv.length);
+
+      let binary = "";
+      for (let i = 0; i < combined.length; i++) {
+        binary += String.fromCharCode(combined[i]);
+      }
+      return this.PREFIX + btoa(binary);
+    } catch (e) {
+      console.error("[CryptoUtils] Error al cifrar dato:", e);
+      return strVal;
+    }
+  },
+
+  /**
+   * Descifra un dato cifrado en el navegador. Si es un registro legacy (texto plano), lo devuelve sin modificar.
+   */
+  async decrypt(cipherText, customPin) {
+    if (cipherText === null || cipherText === undefined || cipherText === "") return "";
+    const strVal = String(cipherText);
+
+    // Retro-compatibilidad: Si el dato no empieza con "ENC:", es un registro legacy plano.
+    if (!strVal.startsWith(this.PREFIX)) {
+      return strVal;
+    }
+
+    try {
+      const b64 = strVal.substring(this.PREFIX.length);
+      const binary = atob(b64);
+      const combined = new Uint8Array(binary.length);
+      for (let i = 0; i < binary.length; i++) {
+        combined[i] = binary.charCodeAt(i);
+      }
+
+      const iv = combined.slice(0, 12);
+      const data = combined.slice(12);
+      const pin = customPin || this.getPin();
+      const key = await this._deriveKey(pin);
+
+      const decryptedBuffer = await window.crypto.subtle.decrypt(
+        { name: "AES-GCM", iv: iv },
+        key,
+        data
+      );
+
+      const decoder = new TextDecoder();
+      return decoder.decode(decryptedBuffer);
+    } catch (e) {
+      console.warn("[CryptoUtils] No se pudo descifrar (¿clave incorrecta?):", e);
+      return strVal;
+    }
+  },
+
+  /**
+   * Descifra un objeto completo de movimiento.
+   */
+  async decryptMovement(mov) {
+    if (!mov) return mov;
+    const decrypted = { ...mov };
+    if (mov.MONTO) decrypted.MONTO = await this.decrypt(mov.MONTO);
+    if (mov.CATEGORIA) decrypted.CATEGORIA = await this.decrypt(mov.CATEGORIA);
+    if (mov.SUBCATEGORIA) decrypted.SUBCATEGORIA = await this.decrypt(mov.SUBCATEGORIA);
+    if (mov.MEDIO_PAGO) decrypted.MEDIO_PAGO = await this.decrypt(mov.MEDIO_PAGO);
+    if (mov.COMENTARIO) decrypted.COMENTARIO = await this.decrypt(mov.COMENTARIO);
+    return decrypted;
   }
 };
 
@@ -435,6 +557,8 @@ async function verifyPinCode(pin) {
     const response = await apiRequest("verifyPin", { pin: pin });
     if (response.success) {
       state.pinVerified = true;
+      state.currentPin = pin;
+      setStoredItem("finance_user_pin", pin);
       document.getElementById("pin-error-msg").classList.add("hidden");
       clearPin();
       showView("view-home");
@@ -638,11 +762,11 @@ async function handleMovementSubmit(e) {
   const payload = {
     fecha: fecha,
     tipo: tipo,
-    categoria: categoria,
-    subcategoria: subcategoria,
-    medioPago: medioPago,
-    monto: monto,
-    comentario: comentario
+    categoria: await CryptoUtils.encrypt(categoria),
+    subcategoria: await CryptoUtils.encrypt(subcategoria),
+    medioPago: await CryptoUtils.encrypt(medioPago),
+    monto: await CryptoUtils.encrypt(monto),
+    comentario: await CryptoUtils.encrypt(comentario)
   };
 
   // Validar datos USD si corresponde
@@ -737,8 +861,9 @@ async function searchMovements() {
   try {
     const response = await apiRequest("searchMovements", filters);
     
-    if (response.success) {
-      renderSearchList(response.data);
+    if (response.success && response.data) {
+      const decryptedItems = await Promise.all(response.data.map(item => CryptoUtils.decryptMovement(item)));
+      renderSearchList(decryptedItems);
       document.getElementById("search-results-info").innerText = response.message;
     } else {
       alert("Error: " + response.message);
@@ -876,8 +1001,14 @@ async function loadDashboardData() {
   showLoader("Cargando dashboard...");
   try {
     const response = await apiRequest("getDashboard");
-    if (response.success) {
-      renderDashboard(response.data);
+    if (response.success && response.data) {
+      const data = response.data;
+      if (data.ultimosMovimientos && data.ultimosMovimientos.length > 0) {
+        data.ultimosMovimientos = await Promise.all(
+          data.ultimosMovimientos.map(item => CryptoUtils.decryptMovement(item))
+        );
+      }
+      renderDashboard(data);
     } else {
       alert("Error al cargar dashboard: " + response.message);
     }
