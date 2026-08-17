@@ -762,11 +762,11 @@ async function handleMovementSubmit(e) {
   const payload = {
     fecha: fecha,
     tipo: tipo,
-    categoria: await CryptoUtils.encrypt(categoria),
-    subcategoria: await CryptoUtils.encrypt(subcategoria),
-    medioPago: await CryptoUtils.encrypt(medioPago),
-    monto: await CryptoUtils.encrypt(monto),
-    comentario: await CryptoUtils.encrypt(comentario)
+    categoria: categoria,
+    subcategoria: subcategoria,
+    medioPago: medioPago,
+    monto: monto,
+    comentario: comentario
   };
 
   // Validar datos USD si corresponde
@@ -861,9 +861,8 @@ async function searchMovements() {
   try {
     const response = await apiRequest("searchMovements", filters);
     
-    if (response.success && response.data) {
-      const decryptedItems = await Promise.all(response.data.map(item => CryptoUtils.decryptMovement(item)));
-      renderSearchList(decryptedItems);
+    if (response.success) {
+      renderSearchList(response.data);
       document.getElementById("search-results-info").innerText = response.message;
     } else {
       alert("Error: " + response.message);
@@ -1001,14 +1000,8 @@ async function loadDashboardData() {
   showLoader("Cargando dashboard...");
   try {
     const response = await apiRequest("getDashboard");
-    if (response.success && response.data) {
-      const data = response.data;
-      if (data.ultimosMovimientos && data.ultimosMovimientos.length > 0) {
-        data.ultimosMovimientos = await Promise.all(
-          data.ultimosMovimientos.map(item => CryptoUtils.decryptMovement(item))
-        );
-      }
-      renderDashboard(data);
+    if (response.success) {
+      renderDashboard(response.data);
     } else {
       alert("Error al cargar dashboard: " + response.message);
     }
