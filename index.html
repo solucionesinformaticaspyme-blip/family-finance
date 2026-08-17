@@ -4,6 +4,13 @@
   <meta charset="UTF-8">
   <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
   <title>Control de Finanzas Familiares</title>
+  <!-- PWA Manifest & iOS Meta Tags -->
+  <link rel="manifest" href="manifest.json">
+  <meta name="theme-color" content="#0b57d0">
+  <meta name="apple-mobile-web-app-capable" content="yes">
+  <meta name="apple-mobile-web-app-status-bar-style" content="default">
+  <meta name="apple-mobile-web-app-title" content="Finanzas">
+  <link rel="apple-touch-icon" href="icons/icon-192.png">
   <!-- Google Fonts: Plus Jakarta Sans & Material Symbols Rounded -->
   <link rel="preconnect" href="https://fonts.googleapis.com">
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
@@ -17,6 +24,12 @@
 
   <!-- CONTENEDOR PRINCIPAL -->
   <div id="app-container">
+
+    <!-- BANNER DE CONEXIÓN OFFLINE -->
+    <div id="offline-banner" class="offline-banner hidden">
+      <span class="material-symbols-rounded" style="font-size: 16px;">wifi_off</span>
+      <span>Sin conexión a internet - Modo lectura</span>
+    </div>
 
     <!-- 1. PANTALLA DE CONFIGURACIÓN INICIAL (FIRST RUN / CONEXIÓN) -->
     <div id="view-setup" class="view active">

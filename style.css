@@ -1304,3 +1304,25 @@ select:disabled {
   font-weight: 600;
   color: var(--text-secondary);
 }
+
+/* ==========================================================================
+   BANNER DE CONEXIÓN OFFLINE (PWA)
+   ========================================================================== */
+
+.offline-banner {
+  background-color: #fff3cd;
+  color: #856404;
+  border-bottom: 1px solid #ffeeba;
+  padding: 10px 16px;
+  font-size: 13px;
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 8px;
+  text-align: center;
+  position: sticky;
+  top: 0;
+  z-index: 9999;
+}
+

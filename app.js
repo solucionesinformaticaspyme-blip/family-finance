@@ -81,8 +81,38 @@ const state = {
 
 document.addEventListener("DOMContentLoaded", () => {
   initEventListeners();
+  initPwaAndNetworkStatus();
   bootApp();
 });
+
+/**
+ * Registra el Service Worker de la PWA y escucha eventos de conexión red.
+ */
+function initPwaAndNetworkStatus() {
+  // 1. Registro del Service Worker (PWA)
+  if ("serviceWorker" in navigator) {
+    window.addEventListener("load", () => {
+      navigator.serviceWorker.register("./sw.js")
+        .then(reg => console.log("[PWA] Service Worker registrado:", reg.scope))
+        .catch(err => console.error("[PWA] Error al registrar Service Worker:", err));
+    });
+  }
+
+  // 2. Control de estado Offline / Online
+  function updateNetworkStatus() {
+    const banner = document.getElementById("offline-banner");
+    if (!banner) return;
+    if (!navigator.onLine) {
+      banner.classList.remove("hidden");
+    } else {
+      banner.classList.add("hidden");
+    }
+  }
+
+  window.addEventListener("online", updateNetworkStatus);
+  window.addEventListener("offline", updateNetworkStatus);
+  updateNetworkStatus();
+}
 
 /**
  * Arranca la aplicación comprobando credenciales locales y estado.
