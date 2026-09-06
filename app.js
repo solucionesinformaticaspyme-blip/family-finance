@@ -64,12 +64,20 @@ function clearStoredItems() {
 const state = {
   apiUrl: getStoredItem("finance_api_url") || "",
   deviceToken: getStoredItem("finance_device_token") || "",
-  currentPin: getStoredItem("finance_user_pin") || "0000", // Clave local de cifrado E2EE
+  currentPin: getStoredItem("finance_user_pin") || "0000",
   user: null,              // Datos del usuario actual { nombre, rol }
   catalog: null,           // Catálogos descargados (categorias, subcategorias, etc.)
   pinVerified: false,      // Control de acceso por PIN
   editingId: null,         // ID del movimiento que se está editando
   lastDashboardKpis: null, // Último conjunto de KPIs del dashboard para uso en otras vistas
+  
+  // Caché SWR e interactividad del Dashboard
+  cachedDashboardData: null,
+  dashboardNeedsRefresh: true,  // Se marca true cuando se guarda/edita/paga un movimiento
+  selectedDonutPeriod: null,    // Período seleccionado para el gráfico de dona
+  pivotExpandedCategories: {},  // Categorías de la tabla pivot actualmente desplegadas
+  pivotExpandAll: false,        // Estado de expandir/colapsar todas
+
   charts: {
     categories: null,
     monthly: null
@@ -366,7 +374,11 @@ function showView(viewId) {
     } else if (viewId === "view-add-movement" && !state.editingId) {
       resetMovementForm();
     } else if (viewId === "view-dashboard") {
-      loadDashboardData();
+      if (state.cachedDashboardData && !state.dashboardNeedsRefresh) {
+        renderDashboard(state.cachedDashboardData);
+      } else {
+        loadDashboardData(true);
+      }
     } else if (viewId === "view-config") {
       loadAdminConsole();
     } else if (viewId === "view-projections") {
@@ -402,6 +414,7 @@ async function refreshCatalogSilently() {
 
 /**
  * Realiza una llamada HTTP POST estandarizada a la API de Apps Script.
+ * Incorpora AbortController para prevenir cuelgues indefinidos en redes móviles lentas.
  * @param {string} action - Nombre de la acción a ejecutar.
  * @param {Object} [data] - Criterios u objetos de datos.
  * @returns {Promise<Object>} Promesa con la respuesta del servidor.
@@ -417,20 +430,37 @@ async function apiRequest(action, data = {}) {
     data: data
   };
 
-  const response = await fetch(state.apiUrl, {
-    method: "POST",
-    mode: "cors",
-    headers: {
-      "Content-Type": "text/plain;charset=utf-8" // GAS requiere text/plain en CORS a veces para evitar preflight OPTIONS
-    },
-    body: JSON.stringify(payload)
-  });
+  // Timeout de 28 segundos para evitar bloqueos en conexiones móviles con señal intermitente
+  const controller = new AbortController();
+  const timeoutId = setTimeout(() => controller.abort(), 28000);
 
-  if (!response.ok) {
-    throw new Error(`HTTP Error: ${response.status}`);
+  try {
+    const response = await fetch(state.apiUrl, {
+      method: "POST",
+      mode: "cors",
+      headers: {
+        "Content-Type": "text/plain;charset=utf-8" // GAS requiere text/plain en CORS para evitar preflight OPTIONS
+      },
+      body: JSON.stringify(payload),
+      signal: controller.signal
+    });
+
+    clearTimeout(timeoutId);
+
+    if (!response.ok) {
+      throw new Error(`HTTP Error: ${response.status}`);
+    }
+
+    return await response.json();
+  } catch (err) {
+    clearTimeout(timeoutId);
+    if (err && err.name === "AbortError") {
+      const timeoutErr = new Error("TIMEOUT");
+      timeoutErr.isTimeout = true;
+      throw timeoutErr;
+    }
+    throw err;
   }
-
-  return await response.json();
 }
 
 // ==========================================================================
@@ -759,7 +789,19 @@ async function handleMovementSubmit(e) {
     return;
   }
 
+  // Prevenir dobles clics deshabilitando el botón de envío inmediatamente
+  const submitBtn = e.target.querySelector('button[type="submit"]');
+  const originalBtnText = submitBtn ? submitBtn.innerText : "";
+  if (submitBtn) {
+    submitBtn.disabled = true;
+    submitBtn.innerText = "Guardando...";
+  }
+
+  // Generar ID de cliente anticipado para idempotencia en nuevos movimientos
+  const clientMovId = id || ("mov_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7));
+
   const payload = {
+    id: clientMovId,
     fecha: fecha,
     tipo: tipo,
     categoria: categoria,
@@ -780,6 +822,10 @@ async function handleMovementSubmit(e) {
 
     if (isNaN(cant) || cant <= 0 || isNaN(tc) || tc <= 0) {
       alert("Para compra de USD debes ingresar cantidad y tipo de cambio válidos.");
+      if (submitBtn) {
+        submitBtn.disabled = false;
+        submitBtn.innerText = originalBtnText;
+      }
       return;
     }
     payload.cantidadUsd = cant;
@@ -792,14 +838,16 @@ async function handleMovementSubmit(e) {
     let response;
     if (id) {
       // Edición de movimiento existente
-      payload.id = id;
       response = await apiRequest("updateMovement", payload);
     } else {
-      // Registro nuevo
+      // Registro nuevo (lleva clientMovId para evitar duplicados si reintenta por corte de red)
       response = await apiRequest("addMovement", payload);
     }
 
     if (response.success) {
+      // Invalidar caché del dashboard para forzar recálculo fiel con el nuevo dato
+      state.dashboardNeedsRefresh = true;
+
       // Configurar vista de éxito
       document.getElementById("success-title").innerText = id ? "Movimiento Actualizado" : "Movimiento Registrado";
       document.getElementById("success-msg").innerText = response.message;
@@ -809,9 +857,19 @@ async function handleMovementSubmit(e) {
       alert("Error: " + response.message);
     }
   } catch (error) {
-    alert("Error de conexión al procesar la solicitud.");
+    if (error && error.isTimeout) {
+      // Timeout de red: invalidamos caché y tranquilizamos al usuario
+      state.dashboardNeedsRefresh = true;
+      alert("La conexión con el servidor tardó más de lo habitual. El movimiento muy probablemente se guardó en la planilla. Verificá en el Dashboard o en Movimientos antes de volver a cargarlo.");
+    } else {
+      alert("Error de conexión al procesar la solicitud: " + (error.message || ""));
+    }
   } finally {
     hideLoader();
+    if (submitBtn) {
+      submitBtn.disabled = false;
+      submitBtn.innerText = originalBtnText;
+    }
   }
 }
 
@@ -993,60 +1051,210 @@ function loadMovementToEdit(item) {
 }
 
 // ==========================================================================
-// DASHBOARD (MÉTRICAS Y GRÁFICOS CHART.JS)
+// DASHBOARD (MÉTRICAS, GRÁFICOS Y TABLA DINÁMICA)
 // ==========================================================================
 
-async function loadDashboardData() {
+/**
+ * Carga los datos consolidados del dashboard.
+ * Implementa estrategia SWR (Stale-While-Revalidate): usa la memoria si no hubo cambios.
+ * @param {boolean} [force=false] - Forzar actualización desde el backend.
+ */
+async function loadDashboardData(force = false) {
+  // Si no se fuerza y tenemos caché válida sin mutaciones pendientes, renderizamos al instante
+  if (!force && state.cachedDashboardData && !state.dashboardNeedsRefresh) {
+    renderDashboard(state.cachedDashboardData);
+    return;
+  }
+
   showLoader("Cargando dashboard...");
   try {
     const response = await apiRequest("getDashboard");
-    if (response.success) {
+    if (response.success && response.data) {
+      state.cachedDashboardData = response.data;
+      state.dashboardNeedsRefresh = false;
       renderDashboard(response.data);
     } else {
-      alert("Error al cargar dashboard: " + response.message);
+      alert("Error al cargar dashboard: " + (response.message || "Respuesta inválida"));
     }
   } catch (error) {
-    alert("Error de conexión al cargar el dashboard.");
+    if (state.cachedDashboardData) {
+      console.warn("Error de conexión al refrescar dashboard, mostrando última versión:", error);
+      renderDashboard(state.cachedDashboardData);
+    } else {
+      alert("Error de conexión al cargar el dashboard. Verifica tu conexión a internet.");
+    }
   } finally {
     hideLoader();
   }
 }
 
+/**
+ * Orquesta el renderizado de todos los módulos del Dashboard.
+ * Cada bloque está aislado en try/catch para máxima resiliencia.
+ * @param {Object} data - Datos completos del dashboard.
+ */
 function renderDashboard(data) {
-  // 1. Renderizar KPIs principales
-  const kpis = data.kpis;
-  state.lastDashboardKpis = kpis; // Guardar para uso en vista de Proyecciones
-  document.getElementById("kpi-saldo").innerText = Utils.formatCurrency(kpis.saldo);
-  document.getElementById("kpi-ingresos").innerText = Utils.formatCurrency(kpis.ingresosMes);
-  document.getElementById("kpi-gastos").innerText = Utils.formatCurrency(kpis.gastosMes);
-  document.getElementById("kpi-ahorro").innerText = Utils.formatCurrency(kpis.ahorroMes);
+  if (!data) return;
 
-  // Nuevos KPIs de Proyecciones
+  // 1. Renderizar KPIs principales y analíticos
+  try {
+    renderDashboardKpis(data.kpis);
+  } catch (e) {
+    console.error("Error al renderizar KPIs:", e);
+  }
+
+  // 2. Gráfico por Categorías (Dona) y Desglose Revolut-style
+  try {
+    renderDonutSection(data);
+  } catch (e) {
+    console.error("Error al renderizar sección de dona:", e);
+  }
+
+  // 3. Ranking de Subcategorías del Mes
+  try {
+    const rankingContainer = document.getElementById("dashboard-ranking-list");
+    if (rankingContainer) {
+      renderSubcategoryRanking(rankingContainer, data.subcategoriaChart || []);
+    }
+  } catch (e) {
+    console.error("Error al renderizar ranking:", e);
+  }
+
+  // 4. Nueva Tabla Dinámica Pivot
+  try {
+    if (data.pivotData) {
+      renderPivotTable(data.pivotData, data.kpis);
+    }
+  } catch (e) {
+    console.error("Error al renderizar tabla pivot:", e);
+  }
+
+  // 5. Gráfico Histórico Mensual con Etiquetas Superiores
+  try {
+    renderMonthlyBarChart(data.mensualChart || []);
+  } catch (e) {
+    console.error("Error al renderizar gráfico mensual:", e);
+  }
+
+  // 6. Últimos Movimientos
+  try {
+    renderDashboardRecentList(data.ultimosMovimientos || []);
+  } catch (e) {
+    console.error("Error al renderizar últimos movimientos:", e);
+  }
+}
+
+/**
+ * Renderiza los KPIs monetarios principales y las tarjetas de análisis comparativo.
+ */
+function renderDashboardKpis(kpis) {
+  if (!kpis) return;
+  state.lastDashboardKpis = kpis;
+
+  // KPIs Monetarios Base
+  const saldoEl = document.getElementById("kpi-saldo");
+  if (saldoEl) {
+    saldoEl.innerText = Utils.formatCurrency(kpis.saldo);
+    saldoEl.className = kpis.saldo < 0 ? "negative" : "positive";
+    const boxEl = document.querySelector(".kpi-saldo-box");
+    if (boxEl) boxEl.style.borderColor = kpis.saldo < 0 ? "#f8d7da" : "#d1e7dd";
+  }
+
+  const ingEl = document.getElementById("kpi-ingresos");
+  if (ingEl) ingEl.innerText = Utils.formatCurrency(kpis.ingresosMes);
+
+  const gastEl = document.getElementById("kpi-gastos");
+  if (gastEl) gastEl.innerText = Utils.formatCurrency(kpis.gastosMes);
+
+  const ahorrEl = document.getElementById("kpi-ahorro");
+  if (ahorrEl) ahorrEl.innerText = Utils.formatCurrency(kpis.ahorroMes);
+
+  // Proyecciones
   const gastosProyectados = kpis.gastosProyectados || 0;
   const saldoProyectado = kpis.saldoProyectado != null ? kpis.saldoProyectado : kpis.saldo;
-  document.getElementById("kpi-proyectado").innerText = Utils.formatCurrency(gastosProyectados);
-  document.getElementById("kpi-saldo-proyectado").innerText = Utils.formatCurrency(saldoProyectado);
 
-  // Colorear saldo disponible (positivo/negativo)
-  const saldoEl = document.getElementById("kpi-saldo");
-  saldoEl.className = kpis.saldo < 0 ? "negative" : "positive";
-  document.querySelector(".kpi-saldo-box").style.borderColor = kpis.saldo < 0 ? "#f8d7da" : "#d1e7dd";
+  const projEl = document.getElementById("kpi-proyectado");
+  if (projEl) projEl.innerText = Utils.formatCurrency(gastosProyectados);
 
-  // Colorear saldo proyectado
   const saldoProjEl = document.getElementById("kpi-saldo-proyectado");
-  saldoProjEl.style.color = saldoProyectado < 0 ? "var(--danger-color)" : "var(--success-color)";
+  if (saldoProjEl) {
+    saldoProjEl.innerText = Utils.formatCurrency(saldoProyectado);
+    saldoProjEl.style.color = saldoProyectado < 0 ? "var(--danger-color)" : "var(--success-color)";
+  }
 
-  // 2. Gráfico por Categorías (Dona)
-  const catChartData = data.categoriaChart;
+  // KPIs Analíticos Comparativos (Fase 5)
+  const varGastosEl = document.getElementById("kpi-var-gastos");
+  const varGastosDiffEl = document.getElementById("kpi-var-gastos-diff");
+  if (varGastosEl && varGastosDiffEl) {
+    if (kpis.varExpensePct !== null && kpis.varExpensePct !== undefined) {
+      const sign = kpis.varExpensePct > 0 ? "+" : "";
+      varGastosEl.innerText = `${sign}${kpis.varExpensePct}%`;
+      const diffAmount = Math.abs(kpis.varExpenseAmount || 0);
+      const diffSign = (kpis.varExpenseAmount || 0) >= 0 ? "más que mes ant." : "menos que mes ant.";
+      varGastosDiffEl.innerText = `${Utils.formatCurrency(diffAmount)} ${diffSign}`;
+      
+      // Coloración neutra y objetiva
+      varGastosEl.style.color = (kpis.varExpensePct > 0) ? "#c5221f" : "#137333";
+    } else {
+      varGastosEl.innerText = "—";
+      varGastosEl.style.color = "inherit";
+      varGastosDiffEl.innerText = "Primer mes con datos";
+    }
+  }
+
+  const tasaAhorroEl = document.getElementById("kpi-tasa-ahorro");
+  if (tasaAhorroEl) {
+    const tasa = kpis.tasaAhorro != null ? kpis.tasaAhorro : 0;
+    tasaAhorroEl.innerText = `${tasa}%`;
+  }
+}
+
+/**
+ * Renderiza el gráfico de dona de gastos y la lista desglosada, con soporte para
+ * cambio instantáneo de período a partir de los datos en memoria.
+ */
+function renderDonutSection(data) {
   const catCanvas = document.getElementById("chart-categories");
+  if (!catCanvas) return;
 
+  const CHART_COLORS = ["#1a73e8", "#0d9488", "#f9ab00", "#d93025", "#a142f4", "#e37400", "#137333", "#0b57d0", "#c5221f", "#185abc"];
+
+  // Poblar selector de período si existe catálogo
+  const selectPeriod = document.getElementById("donut-period-select");
+  let activeCategories = [];
+  let totalGastos = 0;
+
+  if (selectPeriod && data.periodsCatalog && data.periodsCatalog.length > 0) {
+    if (!state.selectedDonutPeriod || !data.periodsCatalog.some(p => p.key === state.selectedDonutPeriod)) {
+      state.selectedDonutPeriod = data.selectedPeriodKey || data.periodsCatalog[0].key;
+    }
+
+    // Actualizar opciones del select sólo si difieren
+    if (selectPeriod.options.length !== data.periodsCatalog.length) {
+      selectPeriod.innerHTML = "";
+      data.periodsCatalog.forEach(p => {
+        const opt = document.createElement("option");
+        opt.value = p.key;
+        opt.textContent = p.label;
+        selectPeriod.appendChild(opt);
+      });
+    }
+    selectPeriod.value = state.selectedDonutPeriod;
+
+    const activePeriod = data.periodsCatalog.find(p => p.key === state.selectedDonutPeriod) || data.periodsCatalog[0];
+    activeCategories = activePeriod.categories || [];
+    totalGastos = activePeriod.totalGastos || 0;
+  } else {
+    activeCategories = data.categoriaChart || [];
+    totalGastos = activeCategories.reduce((sum, c) => sum + (c.monto || 0), 0);
+  }
+
+  // Destruir instancia anterior si existe
   if (state.charts.categories) {
     state.charts.categories.destroy();
   }
 
-  const CHART_COLORS = ["#1a73e8", "#0d9488", "#f9ab00", "#d93025", "#a142f4", "#e37400", "#137333", "#0b57d0", "#c5221f", "#185abc"];
-
-  if (catChartData.length === 0) {
+  if (activeCategories.length === 0) {
     state.charts.categories = new Chart(catCanvas, {
       type: "doughnut",
       data: {
@@ -1059,14 +1267,15 @@ function renderDashboard(data) {
         plugins: { legend: { display: true, position: "bottom" } }
       }
     });
-    document.getElementById("dashboard-category-details").innerHTML = "<p class=\"text-secondary small text-center\">No hay egresos este mes.</p>";
+    const catDetails = document.getElementById("dashboard-category-details");
+    if (catDetails) catDetails.innerHTML = '<p class="text-secondary small text-center py-2">No hay egresos registrados en este período.</p>';
   } else {
     state.charts.categories = new Chart(catCanvas, {
       type: "doughnut",
       data: {
-        labels: catChartData.map(c => c.categoria),
+        labels: activeCategories.map(c => c.categoria),
         datasets: [{
-          data: catChartData.map(c => c.monto),
+          data: activeCategories.map(c => c.monto),
           backgroundColor: CHART_COLORS
         }]
       },
@@ -1074,45 +1283,266 @@ function renderDashboard(data) {
         responsive: true,
         maintainAspectRatio: false,
         plugins: {
-          legend: { display: true, position: "bottom", labels: { boxWidth: 12, font: { size: 12 } } }
+          legend: { display: true, position: "bottom", labels: { boxWidth: 12, font: { size: 12 } } },
+          tooltip: {
+            callbacks: {
+              label: function(context) {
+                const val = context.raw || 0;
+                const pct = totalGastos > 0 ? ((val / totalGastos) * 100).toFixed(1) : "0.0";
+                return `${context.label}: ${Utils.formatCurrency(val)} (${pct}%)`;
+              }
+            }
+          }
         }
       }
     });
 
-    // Tabla desglosada de Categorías (Revolut Style)
-    const totalGastos = catChartData.reduce((sum, c) => sum + c.monto, 0);
+    // Desglose estilo Revolut
     const catDetails = document.getElementById("dashboard-category-details");
-    catDetails.innerHTML = "";
-    catChartData.forEach((c, idx) => {
-      const pct = totalGastos > 0 ? ((c.monto / totalGastos) * 100).toFixed(1) : "0.0";
-      const color = CHART_COLORS[idx % CHART_COLORS.length];
-      catDetails.innerHTML += `
-        <div class="percentage-item">
-          <div class="percentage-header">
-            <span class="percentage-label" style="display:flex;align-items:center;gap:8px;">
-              <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
-              ${c.categoria}
-            </span>
-            <span class="percentage-values"><strong>${Utils.formatCurrency(c.monto)}</strong> ${pct}%</span>
-          </div>
-          <div class="progress-bar-container">
-            <div class="progress-bar-fill" style="width:${pct}%;background:${color};"></div>
-          </div>
-        </div>`;
-    });
+    if (catDetails) {
+      catDetails.innerHTML = "";
+      activeCategories.forEach((c, idx) => {
+        const pct = totalGastos > 0 ? ((c.monto / totalGastos) * 100).toFixed(1) : "0.0";
+        const color = CHART_COLORS[idx % CHART_COLORS.length];
+        catDetails.innerHTML += `
+          <div class="percentage-item">
+            <div class="percentage-header">
+              <span class="percentage-label" style="display:flex;align-items:center;gap:8px;">
+                <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+                ${c.categoria}
+              </span>
+              <span class="percentage-values"><strong>${Utils.formatCurrency(c.monto)}</strong> ${pct}%</span>
+            </div>
+            <div class="progress-bar-container">
+              <div class="progress-bar-fill" style="width:${pct}%;background:${color};"></div>
+            </div>
+          </div>`;
+      });
+    }
+  }
+}
+
+/**
+ * Renderiza la nueva Tabla Dinámica Tipo Pivot con 4 meses cronológicos,
+ * acumulados anuales, primera columna fija y soporte de colapso/despliegue.
+ */
+function renderPivotTable(pivotData, kpis) {
+  const container = document.getElementById("pivot-table-container");
+  if (!container) return;
+
+  if (!pivotData || !pivotData.months || pivotData.months.length === 0) {
+    container.innerHTML = '<p class="text-secondary small text-center py-3">No hay suficientes datos para la comparativa.</p>';
+    return;
   }
 
-  // 3. Ranking de Subcategorías del Mes (calculado desde el acumulado del mes que proviene del backend)
-  const rankingContainer = document.getElementById("dashboard-ranking-list");
-  renderSubcategoryRanking(rankingContainer, data.subcategoriaChart || []);
+  const months = pivotData.months;
+  let html = '<table class="pivot-table"><thead><tr>';
+  html += '<th style="text-align:left;">Concepto</th>';
+  months.forEach((m, idx) => {
+    const isCurrent = (idx === 3);
+    html += `<th class="${isCurrent ? 'pivot-th-current' : ''}">${m.label}</th>`;
+  });
+  html += `<th>Total ${pivotData.prevYear}</th>`;
+  html += `<th>YTD ${pivotData.currYear}</th>`;
+  html += `<th>Var. Anual</th>`;
+  html += '</tr></thead><tbody>';
 
-  // 4. Gráfico Histórico Mensual (Barras)
-  const monthlyData = data.mensualChart;
+  function renderCells(node, isNet = false) {
+    let cellsHtml = '';
+    for (let i = 0; i < 4; i++) {
+      const val = node['m' + i] || 0;
+      const isCur = (i === 3);
+      if (isNet) {
+        const colClass = val < 0 ? 'text-danger' : (val > 0 ? 'text-success' : '');
+        cellsHtml += `<td class="${isCur ? 'pivot-td-current font-weight-bold' : ''} ${colClass}">${Utils.formatCompactCurrency(val)}</td>`;
+      } else {
+        cellsHtml += `<td class="${isCur ? 'pivot-td-current' : ''}">${val > 0 ? Utils.formatCompactCurrency(val) : '—'}</td>`;
+      }
+    }
+    
+    // Total Año Anterior
+    const prevTot = node.prevYearTotal || 0;
+    if (isNet) {
+      cellsHtml += `<td class="${prevTot < 0 ? 'text-danger' : 'text-success'}">${Utils.formatCompactCurrency(prevTot)}</td>`;
+    } else {
+      cellsHtml += `<td>${prevTot > 0 ? Utils.formatCompactCurrency(prevTot) : '—'}</td>`;
+    }
+
+    // YTD Año Actual
+    const currYtd = node.currYearYtd || 0;
+    if (isNet) {
+      cellsHtml += `<td class="font-weight-bold ${currYtd < 0 ? 'text-danger' : 'text-success'}">${Utils.formatCompactCurrency(currYtd)}</td>`;
+    } else {
+      cellsHtml += `<td class="font-weight-bold">${currYtd > 0 ? Utils.formatCompactCurrency(currYtd) : '—'}</td>`;
+    }
+
+    // Variación Anual Homogénea (YTD Actual vs YTD Anterior Homogéneo)
+    const prevHomog = node.prevYearYtdHomog || 0;
+    let trendHtml = '—';
+    if (isNet) {
+      if (prevHomog !== 0 || currYtd !== 0) {
+        const diff = currYtd - prevHomog;
+        const sign = diff >= 0 ? '+' : '';
+        trendHtml = `<span class="trend-badge ${diff >= 0 ? 'trend-up' : 'trend-down'}">${sign}${Utils.formatCompactCurrency(diff)}</span>`;
+      }
+    } else if (prevHomog > 0 && currYtd > 0) {
+      const varPct = Math.round(((currYtd - prevHomog) / prevHomog) * 1000) / 10;
+      const sign = varPct > 0 ? '+' : '';
+      const badgeClass = varPct > 0 ? 'trend-down' : 'trend-up';
+      trendHtml = `<span class="trend-badge ${badgeClass}">${sign}${varPct}%</span>`;
+    }
+    cellsHtml += `<td>${trendHtml}</td>`;
+    return cellsHtml;
+  }
+
+  // --- SECCIÓN 1: INGRESOS ---
+  html += `<tr class="pivot-section-hdr"><td colspan="8">INGRESOS</td></tr>`;
+  if (pivotData.ingresos && pivotData.ingresos.length > 0) {
+    pivotData.ingresos.forEach(cat => {
+      const catKey = "Ingreso_" + cat.categoria;
+      const isExpanded = !!state.pivotExpandedCategories[catKey];
+      const hasSubs = cat.subcategorias && cat.subcategorias.length > 0;
+
+      html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${catKey}')">`;
+      html += `<td>`;
+      if (hasSubs) {
+        html += `<span class="material-symbols-rounded pivot-chevron ${isExpanded ? 'open' : ''}">chevron_right</span>`;
+      } else {
+        html += `<span style="display:inline-block;width:24px;"></span>`;
+      }
+      html += `<span>${cat.categoria}</span></td>`;
+      html += renderCells(cat.valores);
+      html += `</tr>`;
+
+      if (isExpanded && hasSubs) {
+        cat.subcategorias.forEach(sub => {
+          html += `<tr class="pivot-row-sub">`;
+          html += `<td><span>${sub.nombre}</span></td>`;
+          html += renderCells(sub.valores);
+          html += `</tr>`;
+        });
+      }
+    });
+
+    html += `<tr class="pivot-row-total">`;
+    html += `<td>Total Ingresos</td>`;
+    html += renderCells(pivotData.totales.ingresos);
+    html += `</tr>`;
+  } else {
+    html += `<tr><td colspan="8" class="text-secondary small text-center py-2">Sin ingresos registrados.</td></tr>`;
+  }
+
+  // --- SECCIÓN 2: GASTOS ---
+  html += `<tr class="pivot-section-hdr"><td colspan="8">GASTOS</td></tr>`;
+  if (pivotData.gastos && pivotData.gastos.length > 0) {
+    pivotData.gastos.forEach(cat => {
+      const catKey = "Egreso_" + cat.categoria;
+      const isExpanded = !!state.pivotExpandedCategories[catKey];
+      const hasSubs = cat.subcategorias && cat.subcategorias.length > 0;
+
+      html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${catKey}')">`;
+      html += `<td>`;
+      if (hasSubs) {
+        html += `<span class="material-symbols-rounded pivot-chevron ${isExpanded ? 'open' : ''}">chevron_right</span>`;
+      } else {
+        html += `<span style="display:inline-block;width:24px;"></span>`;
+      }
+      html += `<span>${cat.categoria}</span></td>`;
+      html += renderCells(cat.valores);
+      html += `</tr>`;
+
+      if (isExpanded && hasSubs) {
+        cat.subcategorias.forEach(sub => {
+          html += `<tr class="pivot-row-sub">`;
+          html += `<td><span>${sub.nombre}</span></td>`;
+          html += renderCells(sub.valores);
+          html += `</tr>`;
+        });
+      }
+    });
+
+    html += `<tr class="pivot-row-total">`;
+    html += `<td>Total Gastos</td>`;
+    html += renderCells(pivotData.totales.gastos);
+    html += `</tr>`;
+  } else {
+    html += `<tr><td colspan="8" class="text-secondary small text-center py-2">Sin gastos registrados.</td></tr>`;
+  }
+
+  // --- SECCIÓN 3: RESULTADO NETO ---
+  html += `<tr class="pivot-row-net">`;
+  html += `<td>RESULTADO NETO</td>`;
+  html += renderCells(pivotData.totales.resultado, true);
+  html += `</tr>`;
+
+  html += '</tbody></table>';
+
+  // Nota de comparación homogénea
+  if (kpis && kpis.varAnualHomogGastoPct !== null && kpis.varAnualHomogGastoPct !== undefined) {
+    const sign = kpis.varAnualHomogGastoPct > 0 ? '+' : '';
+    html += `
+      <div class="pivot-info-note">
+        <span class="material-symbols-rounded" style="font-size:16px;">info</span>
+        <span>Comparativa YTD Homogénea (Ene-${pivotData.currentMonthName} ${pivotData.prevYear} vs Ene-${pivotData.currentMonthName} ${pivotData.currYear}): 
+        Variación Gasto Acumulado <strong>${sign}${kpis.varAnualHomogGastoPct}%</strong></span>
+      </div>`;
+  }
+
+  container.innerHTML = html;
+}
+
+/**
+ * Expande o colapsa una categoría en la tabla dinámica.
+ */
+window.togglePivotCategory = function(catKey) {
+  state.pivotExpandedCategories[catKey] = !state.pivotExpandedCategories[catKey];
+  if (state.cachedDashboardData && state.cachedDashboardData.pivotData) {
+    renderPivotTable(state.cachedDashboardData.pivotData, state.cachedDashboardData.kpis);
+  }
+};
+
+/**
+ * Renderiza el gráfico histórico mensual de barras con valores compactos encima de cada barra.
+ */
+function renderMonthlyBarChart(monthlyData) {
   const monthlyCanvas = document.getElementById("chart-monthly");
+  if (!monthlyCanvas) return;
 
   if (state.charts.monthly) {
     state.charts.monthly.destroy();
   }
+
+  if (!monthlyData || monthlyData.length === 0) {
+    monthlyCanvas.parentElement.innerHTML = '<p class="text-secondary small text-center py-3">Sin datos históricos suficientes.</p>';
+    return;
+  }
+
+  // Plugin Chart.js para dibujar valores numéricos compactos sobre cada barra
+  const topLabelsPlugin = {
+    id: "topLabelsPlugin",
+    afterDatasetsDraw(chart) {
+      const { ctx } = chart;
+      ctx.save();
+      ctx.font = "600 9.5px system-ui, -apple-system, sans-serif";
+      ctx.textAlign = "center";
+      ctx.textBaseline = "bottom";
+
+      chart.data.datasets.forEach((dataset, datasetIndex) => {
+        const meta = chart.getDatasetMeta(datasetIndex);
+        if (meta.hidden) return;
+
+        meta.data.forEach((bar, index) => {
+          const val = dataset.data[index];
+          if (val > 0) {
+            const text = Utils.formatCompactCurrency(val);
+            ctx.fillStyle = dataset.backgroundColor || "#4b5563";
+            ctx.fillText(text, bar.x, bar.y - 3);
+          }
+        });
+      });
+      ctx.restore();
+    }
+  };
 
   state.charts.monthly = new Chart(monthlyCanvas, {
     type: "bar",
@@ -1127,15 +1557,34 @@ function renderDashboard(data) {
     options: {
       responsive: true,
       maintainAspectRatio: false,
-      scales: { y: { beginAtZero: true, ticks: { font: { size: 11 } } } },
+      layout: {
+        padding: { top: 22, left: 0, right: 0, bottom: 0 }
+      },
+      scales: {
+        y: {
+          beginAtZero: true,
+          ticks: {
+            font: { size: 10 },
+            callback: function(val) { return Utils.formatCompactCurrency(val); }
+          }
+        },
+        x: {
+          ticks: { font: { size: 11 } }
+        }
+      },
       plugins: {
-        legend: { display: true, position: "bottom", labels: { boxWidth: 12, font: { size: 12 } } }
+        legend: { display: true, position: "bottom", labels: { boxWidth: 12, font: { size: 12 } } },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              return `${context.dataset.label}: ${Utils.formatCurrency(context.raw)}`;
+            }
+          }
+        }
       }
-    }
+    },
+    plugins: [topLabelsPlugin]
   });
-
-  // 5. Últimos Movimientos
-  renderDashboardRecentList(data.ultimosMovimientos);
 }
 
 /**
@@ -1449,6 +1898,7 @@ async function handleCatalogSubmit(e, entityType, pkField, idInputId, getDataCal
     });
 
     if (response.success) {
+      state.dashboardNeedsRefresh = true;
       alert(response.message);
       resetFormCallback();
       loadAdminConsole(); // Recargar toda la consola
@@ -1665,6 +2115,50 @@ function initEventListeners() {
 
   // Modal de pago: confirmar pago
   document.getElementById("form-pay-projection").addEventListener("submit", handlePayProjection);
+
+  // Botón de refresco manual del Dashboard
+  const btnRefresh = document.getElementById("btn-refresh-dashboard");
+  if (btnRefresh) {
+    btnRefresh.addEventListener("click", () => {
+      loadDashboardData(true);
+    });
+  }
+
+  // Selector interactivo de período de gastos (Dona)
+  const donutPeriodSelect = document.getElementById("donut-period-select");
+  if (donutPeriodSelect) {
+    donutPeriodSelect.addEventListener("change", (e) => {
+      state.selectedDonutPeriod = e.target.value;
+      if (state.cachedDashboardData) {
+        renderDonutSection(state.cachedDashboardData);
+      }
+    });
+  }
+
+  // Botón expandir/colapsar todas las categorías de la tabla Pivot
+  const btnToggleAllPivot = document.getElementById("btn-toggle-all-pivot");
+  if (btnToggleAllPivot) {
+    btnToggleAllPivot.addEventListener("click", () => {
+      state.pivotExpandAll = !state.pivotExpandAll;
+      if (state.cachedDashboardData && state.cachedDashboardData.pivotData) {
+        const p = state.cachedDashboardData.pivotData;
+        const allKeys = [
+          ...p.ingresos.map(c => "Ingreso_" + c.categoria),
+          ...p.gastos.map(c => "Egreso_" + c.categoria)
+        ];
+        allKeys.forEach(k => {
+          state.pivotExpandedCategories[k] = state.pivotExpandAll;
+        });
+
+        const icon = document.getElementById("btn-toggle-all-icon");
+        const text = document.getElementById("btn-toggle-all-text");
+        if (icon) icon.textContent = state.pivotExpandAll ? "unfold_less" : "unfold_more";
+        if (text) text.textContent = state.pivotExpandAll ? "Colapsar" : "Expandir";
+
+        renderPivotTable(state.cachedDashboardData.pivotData, state.cachedDashboardData.kpis);
+      }
+    });
+  }
 }
 
 // ==========================================================================
@@ -1802,6 +2296,7 @@ async function handleSaveProjection(e) {
 
     const response = await apiRequest("saveProjection", payload);
     if (response.success) {
+      state.dashboardNeedsRefresh = true;
       resetProjectionForm();
       loadProjectionsView();
     } else {
@@ -1824,6 +2319,7 @@ async function handleDeleteProjection(id, concepto) {
   try {
     const response = await apiRequest("deleteProjection", { id });
     if (response.success) {
+      state.dashboardNeedsRefresh = true;
       loadProjectionsView();
     } else {
       alert("Error: " + response.message);
@@ -1928,6 +2424,7 @@ async function handlePayProjection(e) {
   try {
     const response = await apiRequest("payProjection", payload);
     if (response.success) {
+      state.dashboardNeedsRefresh = true;
       document.getElementById("modal-pay-projection").classList.add("hidden");
       loadProjectionsView();
     } else {
@@ -1990,6 +2487,21 @@ const Utils = {
       currency: "ARS",
       minimumFractionDigits: 2
     }).format(val);
+  },
+
+  formatCompactCurrency: function(monto) {
+    const val = parseFloat(monto) || 0;
+    const absVal = Math.abs(val);
+    const sign = val < 0 ? "-" : "";
+    if (absVal >= 1000000) {
+      const formatted = (absVal / 1000000).toLocaleString("es-AR", { minimumFractionDigits: 1, maximumFractionDigits: 1 });
+      return sign + "$" + formatted + "M";
+    }
+    if (absVal >= 1000) {
+      const formatted = (absVal / 1000).toLocaleString("es-AR", { minimumFractionDigits: 0, maximumFractionDigits: 0 });
+      return sign + "$" + formatted + "K";
+    }
+    return sign + "$" + Math.round(absVal).toLocaleString("es-AR");
   }
 };
 

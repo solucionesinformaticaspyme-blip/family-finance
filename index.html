@@ -340,7 +340,10 @@
         <button class="btn-back">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
-        <h1>Dashboard Mensual</h1>
+        <h1 style="flex: 1;">Dashboard Mensual</h1>
+        <button type="button" id="btn-refresh-dashboard" class="btn-icon" title="Actualizar datos" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
+          <span class="material-symbols-rounded">refresh</span>
+        </button>
       </header>
       <main class="view-content">
         <!-- Saldo Disponible (Principal) -->
@@ -393,13 +396,36 @@
               <span class="kpi-value" id="kpi-saldo-proyectado">$ 0.00</span>
             </div>
           </div>
+
+          <!-- NUEVO: Tarjetas de Análisis Comparativo (Fase 5) -->
+          <div class="kpi-row" id="kpi-row-analytics">
+            <div class="kpi-card kpi-analytics col-6">
+              <div class="kpi-info">
+                <span class="kpi-label">Var. Gastos vs Mes Ant.</span>
+                <span class="kpi-value-sub" id="kpi-var-gastos">—</span>
+                <small class="kpi-caption" id="kpi-var-gastos-diff">Calculando...</small>
+              </div>
+            </div>
+            <div class="kpi-card kpi-analytics col-6">
+              <div class="kpi-info">
+                <span class="kpi-label">Tasa de Ahorro</span>
+                <span class="kpi-value-sub text-teal" id="kpi-tasa-ahorro">—</span>
+                <small class="kpi-caption" id="kpi-tasa-ahorro-sub">del ingreso mensual</small>
+              </div>
+            </div>
+          </div>
         </section>
 
         <!-- Gráficos y Desgloses -->
         <section class="charts-section">
-          <!-- Distribución de Gastos (Dona + Lista Detallada) -->
+          <!-- Distribución de Gastos (Dona + Selector de Período + Lista Detallada) -->
           <div class="chart-card">
-            <h4>Gastos por Categoría</h4>
+            <div class="chart-header-row">
+              <h4>Gastos por Categoría</h4>
+              <select id="donut-period-select" class="select-period-compact" aria-label="Seleccionar mes de gastos">
+                <!-- Poblado dinámicamente -->
+              </select>
+            </div>
             <div class="chart-wrapper">
               <canvas id="chart-categories"></canvas>
             </div>
@@ -411,15 +437,34 @@
 
           <!-- Ranking de Gastos (Subcategorías) -->
           <div class="chart-card">
-            <h4>Ranking de Gastos (Subcategorías)</h4>
+            <h4>Ranking de Gastos del Mes</h4>
             <div id="dashboard-ranking-list" class="ranking-list">
               <!-- Cargado dinámicamente -->
             </div>
           </div>
 
+          <!-- NUEVA TABLA DINÁMICA TIPO PIVOT (Fase 7) -->
+          <div class="chart-card pivot-card">
+            <div class="pivot-header">
+              <div>
+                <h4>Análisis Comparativo (Pivot)</h4>
+                <p class="subtitle-small">Evolución de 4 meses y comparativa anual homogénea.</p>
+              </div>
+              <button type="button" id="btn-toggle-all-pivot" class="btn-pivot-toggle" title="Expandir o colapsar todas las categorías">
+                <span class="material-symbols-rounded" id="btn-toggle-all-icon" style="font-size:18px;">unfold_more</span>
+                <span id="btn-toggle-all-text">Expandir</span>
+              </button>
+            </div>
+            <div class="pivot-table-wrapper">
+              <div id="pivot-table-container">
+                <!-- Renderizado dinámicamente -->
+              </div>
+            </div>
+          </div>
+
           <!-- Evolución Mensual -->
           <div class="chart-card">
-            <h4>Evolución Mensual</h4>
+            <h4>Evolución Mensual (Ingresos vs Gastos)</h4>
             <div class="chart-wrapper">
               <canvas id="chart-monthly"></canvas>
             </div>
