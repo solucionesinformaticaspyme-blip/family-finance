@@ -448,12 +448,18 @@
             <div class="pivot-header">
               <div>
                 <h4>Análisis Comparativo (Pivot)</h4>
-                <p class="subtitle-small">Evolución de 4 meses y comparativa anual homogénea.</p>
+                <p class="subtitle-small" id="pivot-subtitle">Evolución mensual y comparativa anual homogénea.</p>
               </div>
-              <button type="button" id="btn-toggle-all-pivot" class="btn-pivot-toggle" title="Expandir o colapsar todas las categorías">
-                <span class="material-symbols-rounded" id="btn-toggle-all-icon" style="font-size:18px;">unfold_more</span>
-                <span id="btn-toggle-all-text">Expandir</span>
-              </button>
+              <div class="pivot-actions-row">
+                <div class="pivot-mode-toggle" role="group" aria-label="Modo de análisis">
+                  <button type="button" class="btn-pivot-mode active" data-mode="months" id="btn-pivot-mode-months">Meses</button>
+                  <button type="button" class="btn-pivot-mode" data-mode="years" id="btn-pivot-mode-years">Años</button>
+                </div>
+                <button type="button" id="btn-toggle-all-pivot" class="btn-pivot-toggle" title="Expandir o colapsar todas las categorías">
+                  <span class="material-symbols-rounded" id="btn-toggle-all-icon" style="font-size:18px;">unfold_more</span>
+                  <span id="btn-toggle-all-text">Expandir</span>
+                </button>
+              </div>
             </div>
             <div class="pivot-table-wrapper">
               <div id="pivot-table-container">

@@ -77,6 +77,7 @@ const state = {
   selectedDonutPeriod: null,    // Período seleccionado para el gráfico de dona
   pivotExpandedCategories: {},  // Categorías de la tabla pivot actualmente desplegadas
   pivotExpandAll: false,        // Estado de expandir/colapsar todas
+  pivotMode: "months",          // Modo temporal de la tabla pivot ("months" | "years")
 
   charts: {
     categories: null,
@@ -1323,8 +1324,25 @@ function renderDonutSection(data) {
 }
 
 /**
- * Renderiza la nueva Tabla Dinámica Tipo Pivot con 4 meses cronológicos,
- * acumulados anuales, primera columna fija y soporte de colapso/despliegue.
+ * Formateo numérico exclusivo para celdas de la tabla Pivot.
+ * Sin signo $, sin abreviaturas (K, M), sin decimales, número completo con separador de miles por punto.
+ * Ejemplo: 4300 -> "4.300", 125850 -> "125.850", 1250000 -> "1.250.000"
+ * @param {number} val - Importe numérico.
+ * @returns {string} Texto formateado o "—" si es 0 o nulo.
+ */
+function formatPivotNumber(val) {
+  if (val === null || val === undefined || isNaN(val)) return "—";
+  const num = Math.round(val);
+  if (num === 0) return "—";
+  return num.toLocaleString("es-AR", { maximumFractionDigits: 0 });
+}
+
+/**
+ * Renderiza la Tabla Dinámica Tipo Pivot con soporte de dos modos temporales:
+ * - Modo "months": 4 meses cronológicos (3 anteriores + mes actual) + Total Año Anterior + YTD + % Var YTD.
+ * - Modo "years": Años históricos disponibles + Año Actual YTD + % Var YTD homogénea.
+ * Conserva la primera columna fija (sticky), jerarquía de categorías/subcategorías,
+ * y expansión/colapso sin recargar datos ni realizar llamadas de red.
  */
 function renderPivotTable(pivotData, kpis) {
   const container = document.getElementById("pivot-table-container");
@@ -1335,55 +1353,122 @@ function renderPivotTable(pivotData, kpis) {
     return;
   }
 
+  // Sincronizar estado visual de los botones de modo
+  const btnMonths = document.getElementById("btn-pivot-mode-months");
+  const btnYears = document.getElementById("btn-pivot-mode-years");
+  if (btnMonths) btnMonths.classList.toggle("active", state.pivotMode === "months");
+  if (btnYears) btnYears.classList.toggle("active", state.pivotMode === "years");
+
+  const subtitleEl = document.getElementById("pivot-subtitle");
+  if (subtitleEl) {
+    subtitleEl.innerText = state.pivotMode === "years"
+      ? "Evolución interanual y comparativa histórica."
+      : "Evolución mensual y comparativa anual homogénea.";
+  }
+
+  const isYearsMode = state.pivotMode === "years";
   const months = pivotData.months;
+
+  // Años pasados para el modo años
+  const allYears = pivotData.years && pivotData.years.length > 0
+    ? pivotData.years
+    : [pivotData.prevYear, pivotData.currYear];
+  let pastYears = allYears.filter(y => y < pivotData.currYear);
+  if (pastYears.length === 0) pastYears = [pivotData.prevYear];
+
+  const totalCols = isYearsMode ? (pastYears.length + 3) : (months.length + 4);
+
+  // Encabezado de la tabla
   let html = '<table class="pivot-table"><thead><tr>';
   html += '<th style="text-align:left;">Concepto</th>';
-  months.forEach((m, idx) => {
-    const isCurrent = (idx === 3);
-    html += `<th class="${isCurrent ? 'pivot-th-current' : ''}">${m.label}</th>`;
-  });
-  html += `<th>Total ${pivotData.prevYear}</th>`;
-  html += `<th>YTD ${pivotData.currYear}</th>`;
-  html += `<th>Var. Anual</th>`;
+
+  if (isYearsMode) {
+    pastYears.forEach(yr => {
+      html += `<th>${yr}</th>`;
+    });
+    html += `<th class="pivot-th-current">${pivotData.currYear} YTD</th>`;
+    html += `<th>Var. Anual</th>`;
+  } else {
+    months.forEach((m, idx) => {
+      const isCurrent = (idx === 3);
+      html += `<th class="${isCurrent ? 'pivot-th-current' : ''}">${m.label}</th>`;
+    });
+    html += `<th>Total ${pivotData.prevYear}</th>`;
+    html += `<th>YTD ${pivotData.currYear}</th>`;
+    html += `<th>Var. Anual</th>`;
+  }
   html += '</tr></thead><tbody>';
 
+  // Helper para generar celdas numéricas con el formato exclusivo de la Pivot
   function renderCells(node, isNet = false) {
     let cellsHtml = '';
-    for (let i = 0; i < 4; i++) {
-      const val = node['m' + i] || 0;
-      const isCur = (i === 3);
-      if (isNet) {
-        const colClass = val < 0 ? 'text-danger' : (val > 0 ? 'text-success' : '');
-        cellsHtml += `<td class="${isCur ? 'pivot-td-current font-weight-bold' : ''} ${colClass}">${Utils.formatCompactCurrency(val)}</td>`;
-      } else {
-        cellsHtml += `<td class="${isCur ? 'pivot-td-current' : ''}">${val > 0 ? Utils.formatCompactCurrency(val) : '—'}</td>`;
-      }
-    }
-    
-    // Total Año Anterior
-    const prevTot = node.prevYearTotal || 0;
-    if (isNet) {
-      cellsHtml += `<td class="${prevTot < 0 ? 'text-danger' : 'text-success'}">${Utils.formatCompactCurrency(prevTot)}</td>`;
-    } else {
-      cellsHtml += `<td>${prevTot > 0 ? Utils.formatCompactCurrency(prevTot) : '—'}</td>`;
-    }
 
-    // YTD Año Actual
-    const currYtd = node.currYearYtd || 0;
-    if (isNet) {
-      cellsHtml += `<td class="font-weight-bold ${currYtd < 0 ? 'text-danger' : 'text-success'}">${Utils.formatCompactCurrency(currYtd)}</td>`;
+    if (isYearsMode) {
+      // Columnas de años pasados
+      pastYears.forEach(yr => {
+        const val = (node.yearly && node.yearly[yr] !== undefined)
+          ? node.yearly[yr]
+          : (yr === pivotData.prevYear ? (node.prevYearTotal || 0) : 0);
+
+        if (isNet) {
+          const colClass = val < 0 ? 'text-danger' : (val > 0 ? 'text-success' : '');
+          cellsHtml += `<td class="${colClass}">${formatPivotNumber(val)}</td>`;
+        } else {
+          cellsHtml += `<td>${val > 0 ? formatPivotNumber(val) : '—'}</td>`;
+        }
+      });
+
+      // Columna Año Actual YTD
+      const currYtd = (node.yearly && node.yearly[pivotData.currYear] !== undefined)
+        ? node.yearly[pivotData.currYear]
+        : (node.currYearYtd || 0);
+
+      if (isNet) {
+        const colClass = currYtd < 0 ? 'text-danger' : (currYtd > 0 ? 'text-success' : '');
+        cellsHtml += `<td class="font-weight-bold pivot-td-current ${colClass}">${formatPivotNumber(currYtd)}</td>`;
+      } else {
+        cellsHtml += `<td class="font-weight-bold pivot-td-current">${currYtd > 0 ? formatPivotNumber(currYtd) : '—'}</td>`;
+      }
     } else {
-      cellsHtml += `<td class="font-weight-bold">${currYtd > 0 ? Utils.formatCompactCurrency(currYtd) : '—'}</td>`;
+      // Columnas de 4 meses
+      for (let i = 0; i < 4; i++) {
+        const val = node['m' + i] || 0;
+        const isCur = (i === 3);
+        if (isNet) {
+          const colClass = val < 0 ? 'text-danger' : (val > 0 ? 'text-success' : '');
+          cellsHtml += `<td class="${isCur ? 'pivot-td-current font-weight-bold' : ''} ${colClass}">${formatPivotNumber(val)}</td>`;
+        } else {
+          cellsHtml += `<td class="${isCur ? 'pivot-td-current' : ''}">${val > 0 ? formatPivotNumber(val) : '—'}</td>`;
+        }
+      }
+
+      // Total Año Anterior
+      const prevTot = node.prevYearTotal || 0;
+      if (isNet) {
+        cellsHtml += `<td class="${prevTot < 0 ? 'text-danger' : 'text-success'}">${formatPivotNumber(prevTot)}</td>`;
+      } else {
+        cellsHtml += `<td>${prevTot > 0 ? formatPivotNumber(prevTot) : '—'}</td>`;
+      }
+
+      // YTD Año Actual
+      const currYtd = node.currYearYtd || 0;
+      if (isNet) {
+        cellsHtml += `<td class="font-weight-bold ${currYtd < 0 ? 'text-danger' : 'text-success'}">${formatPivotNumber(currYtd)}</td>`;
+      } else {
+        cellsHtml += `<td class="font-weight-bold">${currYtd > 0 ? formatPivotNumber(currYtd) : '—'}</td>`;
+      }
     }
 
     // Variación Anual Homogénea (YTD Actual vs YTD Anterior Homogéneo)
     const prevHomog = node.prevYearYtdHomog || 0;
+    const currYtd = node.currYearYtd || 0;
     let trendHtml = '—';
+
     if (isNet) {
       if (prevHomog !== 0 || currYtd !== 0) {
         const diff = currYtd - prevHomog;
         const sign = diff >= 0 ? '+' : '';
-        trendHtml = `<span class="trend-badge ${diff >= 0 ? 'trend-up' : 'trend-down'}">${sign}${Utils.formatCompactCurrency(diff)}</span>`;
+        trendHtml = `<span class="trend-badge ${diff >= 0 ? 'trend-up' : 'trend-down'}">${sign}${formatPivotNumber(diff)}</span>`;
       }
     } else if (prevHomog > 0 && currYtd > 0) {
       const varPct = Math.round(((currYtd - prevHomog) / prevHomog) * 1000) / 10;
@@ -1396,7 +1481,7 @@ function renderPivotTable(pivotData, kpis) {
   }
 
   // --- SECCIÓN 1: INGRESOS ---
-  html += `<tr class="pivot-section-hdr"><td colspan="8">INGRESOS</td></tr>`;
+  html += `<tr class="pivot-section-hdr"><td colspan="${totalCols}">INGRESOS</td></tr>`;
   if (pivotData.ingresos && pivotData.ingresos.length > 0) {
     pivotData.ingresos.forEach(cat => {
       const catKey = "Ingreso_" + cat.categoria;
@@ -1429,11 +1514,11 @@ function renderPivotTable(pivotData, kpis) {
     html += renderCells(pivotData.totales.ingresos);
     html += `</tr>`;
   } else {
-    html += `<tr><td colspan="8" class="text-secondary small text-center py-2">Sin ingresos registrados.</td></tr>`;
+    html += `<tr><td colspan="${totalCols}" class="text-secondary small text-center py-2">Sin ingresos registrados.</td></tr>`;
   }
 
   // --- SECCIÓN 2: GASTOS ---
-  html += `<tr class="pivot-section-hdr"><td colspan="8">GASTOS</td></tr>`;
+  html += `<tr class="pivot-section-hdr"><td colspan="${totalCols}">GASTOS</td></tr>`;
   if (pivotData.gastos && pivotData.gastos.length > 0) {
     pivotData.gastos.forEach(cat => {
       const catKey = "Egreso_" + cat.categoria;
@@ -1466,7 +1551,7 @@ function renderPivotTable(pivotData, kpis) {
     html += renderCells(pivotData.totales.gastos);
     html += `</tr>`;
   } else {
-    html += `<tr><td colspan="8" class="text-secondary small text-center py-2">Sin gastos registrados.</td></tr>`;
+    html += `<tr><td colspan="${totalCols}" class="text-secondary small text-center py-2">Sin gastos registrados.</td></tr>`;
   }
 
   // --- SECCIÓN 3: RESULTADO NETO ---
@@ -1477,8 +1562,14 @@ function renderPivotTable(pivotData, kpis) {
 
   html += '</tbody></table>';
 
-  // Nota de comparación homogénea
-  if (kpis && kpis.varAnualHomogGastoPct !== null && kpis.varAnualHomogGastoPct !== undefined) {
+  // Nota explicativa al pie de la tabla según el modo activo
+  if (isYearsMode) {
+    html += `
+      <div class="pivot-info-note">
+        <span class="material-symbols-rounded" style="font-size:16px;">info</span>
+        <span>Nota: El año <strong>${pivotData.currYear}</strong> se muestra acumulado hasta ${pivotData.currentMonthName} (YTD). La columna <strong>% Var YTD</strong> compara contra el período equivalente de ${pivotData.prevYear}.</span>
+      </div>`;
+  } else if (kpis && kpis.varAnualHomogGastoPct !== null && kpis.varAnualHomogGastoPct !== undefined) {
     const sign = kpis.varAnualHomogGastoPct > 0 ? '+' : '';
     html += `
       <div class="pivot-info-note">
@@ -2156,6 +2247,30 @@ function initEventListeners() {
         if (text) text.textContent = state.pivotExpandAll ? "Colapsar" : "Expandir";
 
         renderPivotTable(state.cachedDashboardData.pivotData, state.cachedDashboardData.kpis);
+      }
+    });
+  }
+
+  // Botones de conmutación de modo Pivot: Meses / Años (cambio instantáneo en memoria)
+  const btnPivotMonths = document.getElementById("btn-pivot-mode-months");
+  const btnPivotYears = document.getElementById("btn-pivot-mode-years");
+  if (btnPivotMonths) {
+    btnPivotMonths.addEventListener("click", () => {
+      if (state.pivotMode !== "months") {
+        state.pivotMode = "months";
+        if (state.cachedDashboardData && state.cachedDashboardData.pivotData) {
+          renderPivotTable(state.cachedDashboardData.pivotData, state.cachedDashboardData.kpis);
+        }
+      }
+    });
+  }
+  if (btnPivotYears) {
+    btnPivotYears.addEventListener("click", () => {
+      if (state.pivotMode !== "years") {
+        state.pivotMode = "years";
+        if (state.cachedDashboardData && state.cachedDashboardData.pivotData) {
+          renderPivotTable(state.cachedDashboardData.pivotData, state.cachedDashboardData.kpis);
+        }
       }
     });
   }
