@@ -783,6 +783,14 @@ select:disabled {
 .tx-amount.ingreso { color: var(--success-color); }
 .tx-amount.ahorro { color: var(--warning-color); }
 
+.tx-actions {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  justify-content: flex-end;
+  margin-top: 4px;
+}
+
 .btn-edit-tx {
   background: var(--bg-input);
   border: 1px solid var(--border-color);
@@ -790,14 +798,37 @@ select:disabled {
   font-size: 12px;
   font-weight: 700;
   cursor: pointer;
-  padding: 6px 12px;
+  padding: 5px 10px;
   border-radius: 20px;
   transition: background-color 0.1s;
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
 }
 
 .btn-edit-tx:active {
   background-color: var(--primary-container);
   border-color: var(--primary-color);
+}
+
+.btn-delete-tx {
+  background: #fdf2f2;
+  border: 1px solid #f8b4b4;
+  color: #c5221f;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  padding: 5px 8px;
+  border-radius: 20px;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  transition: background-color 0.1s, border-color 0.1s;
+}
+
+.btn-delete-tx:active {
+  background-color: #fde8e8;
+  border-color: #c5221f;
 }
 
 /* ==========================================================================
@@ -1506,22 +1537,23 @@ select:disabled {
   border-bottom: 2px solid #e2e8f0;
 }
 
-/* Primera columna Sticky para navegación perfecta en iPhone */
+/* Primera columna Sticky para navegación perfecta en iPhone y Desktop */
 .pivot-table th:first-child,
 .pivot-table td:first-child {
+  position: -webkit-sticky;
   position: sticky;
   left: 0;
-  z-index: 2;
+  z-index: 5;
   text-align: left;
-  max-width: 190px;
-  min-width: 150px;
+  max-width: 195px;
+  min-width: 160px;
   background-color: #ffffff;
-  box-shadow: 2px 0 5px rgba(0, 0, 0, 0.04);
+  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.08);
 }
 
 .pivot-table th:first-child {
   background-color: #f8fafc;
-  z-index: 3;
+  z-index: 10;
 }
 
 /* Filas de Secciones (Ingresos / Gastos) */
@@ -1537,7 +1569,8 @@ select:disabled {
 }
 
 .pivot-section-hdr td:first-child {
-  background: #edf2f7;
+  background-color: #edf2f7 !important;
+  z-index: 6;
 }
 
 /* Filas de Categorías (Nivel 1) */
@@ -1549,18 +1582,22 @@ select:disabled {
   transition: background-color 0.15s;
 }
 
-.pivot-row-cat:hover {
-  background-color: #f8fafc;
+.pivot-row-cat td:first-child {
+  background-color: #ffffff;
+  z-index: 5;
+  white-space: nowrap;
 }
 
-.pivot-row-cat td:first-child {
-  display: flex;
+.pivot-row-cat:hover td,
+.pivot-row-cat:hover td:first-child {
+  background-color: #f8fafc !important;
+}
+
+.pivot-cat-inner {
+  display: inline-flex;
   align-items: center;
   gap: 6px;
-}
-
-.pivot-row-cat:hover td:first-child {
-  background-color: #f8fafc;
+  vertical-align: middle;
 }
 
 .pivot-chevron {
@@ -1588,8 +1625,10 @@ select:disabled {
 }
 
 .pivot-row-sub td:first-child {
-  padding-left: 32px;
-  background-color: #fafbfc;
+  padding-left: 28px;
+  background-color: #fafbfc !important;
+  z-index: 5;
+  white-space: nowrap;
 }
 
 /* Fila de Totales y Resultado */
@@ -1600,7 +1639,9 @@ select:disabled {
 }
 
 .pivot-row-total td:first-child {
-  background-color: #f8fafc;
+  background-color: #f8fafc !important;
+  z-index: 6;
+  white-space: nowrap;
 }
 
 .pivot-row-net {
@@ -1612,7 +1653,9 @@ select:disabled {
 }
 
 .pivot-row-net td:first-child {
-  background-color: #f1f5f9;
+  background-color: #f1f5f9 !important;
+  z-index: 7;
+  white-space: nowrap;
 }
 
 /* Badges de Tendencia Objetiva */

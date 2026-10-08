@@ -340,7 +340,10 @@
         <button class="btn-back">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
-        <h1 style="flex: 1;">Dashboard Mensual</h1>
+        <div style="flex: 1;">
+          <h1 style="margin: 0; line-height: 1.2;">Dashboard Mensual</h1>
+          <p id="dashboard-current-month-badge" class="subtitle-small" style="margin: 2px 0 0; color: var(--text-secondary); font-size: 11px;">Mes en curso (los movimientos se imputan según su fecha real)</p>
+        </div>
         <button type="button" id="btn-refresh-dashboard" class="btn-icon" title="Actualizar datos" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
           <span class="material-symbols-rounded">refresh</span>
         </button>
@@ -473,6 +476,30 @@
             <h4>Evolución Mensual (Ingresos vs Gastos)</h4>
             <div class="chart-wrapper">
               <canvas id="chart-monthly"></canvas>
+            </div>
+          </div>
+
+          <!-- NUEVO: Evolución de la Tasa de Ahorro Histórica (%) -->
+          <div class="chart-card">
+            <div class="chart-header-row">
+              <h4>Evolución de la Tasa de Ahorro (%)</h4>
+              <span style="font-size:11px;font-weight:600;padding:3px 8px;border-radius:12px;background:#e8f0fe;color:#1a73e8;">% Retenido</span>
+            </div>
+            <p class="subtitle-small">Capacidad de ahorro histórica sobre ingresos en los últimos 6 meses.</p>
+            <div class="chart-wrapper">
+              <canvas id="chart-savings-rate"></canvas>
+            </div>
+          </div>
+
+          <!-- NUEVO: Gastos por Medio de Pago -->
+          <div class="chart-card">
+            <h4>Gastos por Medio de Pago</h4>
+            <p class="subtitle-small">Distribución de egresos según la forma de pago en el período seleccionado.</p>
+            <div class="chart-wrapper">
+              <canvas id="chart-payment-methods"></canvas>
+            </div>
+            <div id="dashboard-payment-methods-details" class="category-percentage-list">
+              <!-- Cargado dinámicamente -->
             </div>
           </div>
         </section>

@@ -81,7 +81,9 @@ const state = {
 
   charts: {
     categories: null,
-    monthly: null
+    monthly: null,
+    savingsRate: null,
+    paymentMethods: null
   }
 };
 
@@ -988,17 +990,66 @@ function renderSearchList(items) {
       </div>
       <div class="tx-right">
         <span class="tx-amount ${amountClass}">${amountSign}${formattedAmount}</span>
-        <button class="btn-edit-tx" data-id="${item.ID}">Editar</button>
+        <div class="tx-actions">
+          <button type="button" class="btn-edit-tx" data-id="${item.ID}" title="Editar movimiento">
+            <span class="material-symbols-rounded" style="font-size:14px;">edit</span>
+            Editar
+          </button>
+          <button type="button" class="btn-delete-tx" data-id="${item.ID}" title="Eliminar movimiento">
+            <span class="material-symbols-rounded" style="font-size:15px;">delete</span>
+          </button>
+        </div>
       </div>
     `;
 
-    // Asignar click al botón de editar
+    // Asignar clicks a los botones de editar y eliminar
     card.querySelector(".btn-edit-tx").addEventListener("click", () => {
       loadMovementToEdit(item);
     });
 
+    card.querySelector(".btn-delete-tx").addEventListener("click", () => {
+      handleDeleteMovement(item.ID, `${item.CATEGORIA} - ${item.SUBCATEGORIA} (${amountSign}${formattedAmount})`);
+    });
+
     container.appendChild(card);
   });
+}
+
+/**
+ * Elimina un movimiento tras confirmación y actualiza datos de forma reactiva.
+ */
+async function handleDeleteMovement(id, detalle = "") {
+  const confirmMsg = detalle
+    ? `¿Estás seguro de que deseas eliminar este movimiento?\n\n"${detalle}"\n\nEsta acción no se puede deshacer.`
+    : "¿Estás seguro de que deseas eliminar este movimiento? Esta acción no se puede deshacer.";
+
+  if (!confirm(confirmMsg)) return;
+
+  showLoader("Eliminando movimiento...");
+  try {
+    const response = await apiRequest("deleteMovement", { id });
+    if (response && response.success) {
+      // Invalidar cachés
+      state.cachedDashboardData = null;
+      state.dashboardNeedsRefresh = true;
+
+      // Si estamos en la vista de búsqueda, refrescar lista
+      const searchView = document.getElementById("view-search");
+      if (searchView && !searchView.classList.contains("hidden") && searchView.classList.contains("active")) {
+        await searchMovements();
+      }
+
+      // Si estamos en el dashboard o inicio, recargar datos de fondo
+      loadDashboardData(true);
+      alert("Movimiento eliminado correctamente.");
+    } else {
+      alert("Error al eliminar: " + (response && response.message ? response.message : "Error desconocido."));
+    }
+  } catch (error) {
+    alert("Error de conexión al eliminar el movimiento.");
+  } finally {
+    hideLoader();
+  }
 }
 
 /**
@@ -1056,6 +1107,28 @@ function loadMovementToEdit(item) {
 // ==========================================================================
 
 /**
+ * Destruye de forma segura y defensiva cualquier instancia previa de Chart.js en un canvas.
+ * Previene el error fatal 'Canvas is already in use' que traba el Dashboard.
+ * @param {string|HTMLCanvasElement} canvasOrId
+ * @returns {HTMLCanvasElement|null}
+ */
+function safeDestroyChart(canvasOrId) {
+  const canvas = typeof canvasOrId === "string" ? document.getElementById(canvasOrId) : canvasOrId;
+  if (!canvas) return null;
+  if (window.Chart && typeof Chart.getChart === "function") {
+    try {
+      const existing = Chart.getChart(canvas);
+      if (existing) {
+        existing.destroy();
+      }
+    } catch (e) {
+      console.warn("Aviso al destruir Chart:", e);
+    }
+  }
+  return canvas;
+}
+
+/**
  * Carga los datos consolidados del dashboard.
  * Implementa estrategia SWR (Stale-While-Revalidate): usa la memoria si no hubo cambios.
  * @param {boolean} [force=false] - Forzar actualización desde el backend.
@@ -1063,21 +1136,31 @@ function loadMovementToEdit(item) {
 async function loadDashboardData(force = false) {
   // Si no se fuerza y tenemos caché válida sin mutaciones pendientes, renderizamos al instante
   if (!force && state.cachedDashboardData && !state.dashboardNeedsRefresh) {
-    renderDashboard(state.cachedDashboardData);
+    try {
+      renderDashboard(state.cachedDashboardData);
+    } catch (e) {
+      console.error("Error al renderizar dashboard desde caché:", e);
+    }
     return;
   }
 
   showLoader("Cargando dashboard...");
   try {
     const response = await apiRequest("getDashboard");
-    if (response.success && response.data) {
+    if (response && response.success && response.data) {
       state.cachedDashboardData = response.data;
       state.dashboardNeedsRefresh = false;
       renderDashboard(response.data);
     } else {
-      alert("Error al cargar dashboard: " + (response.message || "Respuesta inválida"));
+      if (state.cachedDashboardData) {
+        console.warn("Respuesta no satisfactoria, mostrando caché anterior:", response);
+        renderDashboard(state.cachedDashboardData);
+      } else {
+        alert("Error al cargar dashboard: " + (response && response.message ? response.message : "Sin respuesta del servidor"));
+      }
     }
   } catch (error) {
+    console.error("Error al cargar dashboard:", error);
     if (state.cachedDashboardData) {
       console.warn("Error de conexión al refrescar dashboard, mostrando última versión:", error);
       renderDashboard(state.cachedDashboardData);
@@ -1137,7 +1220,21 @@ function renderDashboard(data) {
     console.error("Error al renderizar gráfico mensual:", e);
   }
 
-  // 6. Últimos Movimientos
+  // 6. Nuevo Gráfico: Evolución de la Tasa de Ahorro Histórica (%)
+  try {
+    renderSavingsRateChart(data.mensualChart || []);
+  } catch (e) {
+    console.error("Error al renderizar gráfico de tasa de ahorro:", e);
+  }
+
+  // 7. Nuevo Gráfico: Gastos por Medio de Pago
+  try {
+    renderPaymentMethodsSection(data);
+  } catch (e) {
+    console.error("Error al renderizar gastos por medio de pago:", e);
+  }
+
+  // 8. Últimos Movimientos
   try {
     renderDashboardRecentList(data.ultimosMovimientos || []);
   } catch (e) {
@@ -1151,6 +1248,16 @@ function renderDashboard(data) {
 function renderDashboardKpis(kpis) {
   if (!kpis) return;
   state.lastDashboardKpis = kpis;
+
+  // Etiqueta indicadora del mes en curso y regla de imputación
+  const monthBadge = document.getElementById("dashboard-current-month-badge");
+  if (monthBadge) {
+    const monthNames = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"];
+    const now = new Date();
+    const curMonthName = monthNames[now.getMonth()];
+    const curYear = now.getFullYear();
+    monthBadge.innerText = `Mes en curso: ${curMonthName} ${curYear} • Los movimientos se imputan según su fecha de movimiento`;
+  }
 
   // KPIs Monetarios Base
   const saldoEl = document.getElementById("kpi-saldo");
@@ -1250,10 +1357,8 @@ function renderDonutSection(data) {
     totalGastos = activeCategories.reduce((sum, c) => sum + (c.monto || 0), 0);
   }
 
-  // Destruir instancia anterior si existe
-  if (state.charts.categories) {
-    state.charts.categories.destroy();
-  }
+  // Destruir instancia anterior de forma segura
+  safeDestroyChart(catCanvas);
 
   if (activeCategories.length === 0) {
     state.charts.categories = new Chart(catCanvas, {
@@ -1489,20 +1594,20 @@ function renderPivotTable(pivotData, kpis) {
       const hasSubs = cat.subcategorias && cat.subcategorias.length > 0;
 
       html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${catKey}')">`;
-      html += `<td>`;
+      html += `<td><span class="pivot-cat-inner">`;
       if (hasSubs) {
         html += `<span class="material-symbols-rounded pivot-chevron ${isExpanded ? 'open' : ''}">chevron_right</span>`;
       } else {
         html += `<span style="display:inline-block;width:24px;"></span>`;
       }
-      html += `<span>${cat.categoria}</span></td>`;
+      html += `<span>${cat.categoria}</span></span></td>`;
       html += renderCells(cat.valores);
       html += `</tr>`;
 
       if (isExpanded && hasSubs) {
         cat.subcategorias.forEach(sub => {
           html += `<tr class="pivot-row-sub">`;
-          html += `<td><span>${sub.nombre}</span></td>`;
+          html += `<td><span class="pivot-cat-inner"><span>${sub.nombre}</span></span></td>`;
           html += renderCells(sub.valores);
           html += `</tr>`;
         });
@@ -1526,20 +1631,20 @@ function renderPivotTable(pivotData, kpis) {
       const hasSubs = cat.subcategorias && cat.subcategorias.length > 0;
 
       html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${catKey}')">`;
-      html += `<td>`;
+      html += `<td><span class="pivot-cat-inner">`;
       if (hasSubs) {
         html += `<span class="material-symbols-rounded pivot-chevron ${isExpanded ? 'open' : ''}">chevron_right</span>`;
       } else {
         html += `<span style="display:inline-block;width:24px;"></span>`;
       }
-      html += `<span>${cat.categoria}</span></td>`;
+      html += `<span>${cat.categoria}</span></span></td>`;
       html += renderCells(cat.valores);
       html += `</tr>`;
 
       if (isExpanded && hasSubs) {
         cat.subcategorias.forEach(sub => {
           html += `<tr class="pivot-row-sub">`;
-          html += `<td><span>${sub.nombre}</span></td>`;
+          html += `<td><span class="pivot-cat-inner"><span>${sub.nombre}</span></span></td>`;
           html += renderCells(sub.valores);
           html += `</tr>`;
         });
@@ -1597,14 +1702,20 @@ window.togglePivotCategory = function(catKey) {
  */
 function renderMonthlyBarChart(monthlyData) {
   const monthlyCanvas = document.getElementById("chart-monthly");
-  if (!monthlyCanvas) return;
-
-  if (state.charts.monthly) {
-    state.charts.monthly.destroy();
-  }
+  safeDestroyChart(monthlyCanvas);
 
   if (!monthlyData || monthlyData.length === 0) {
-    monthlyCanvas.parentElement.innerHTML = '<p class="text-secondary small text-center py-3">Sin datos históricos suficientes.</p>';
+    state.charts.monthly = new Chart(monthlyCanvas, {
+      type: "bar",
+      data: {
+        labels: ["Sin datos históricos"],
+        datasets: [{ label: "Sin movimientos", data: [0], backgroundColor: "#e2e8f0" }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false
+      }
+    });
     return;
   }
 
@@ -1679,6 +1790,200 @@ function renderMonthlyBarChart(monthlyData) {
 }
 
 /**
+ * Renderiza el gráfico de Evolución de la Tasa de Ahorro Histórica (%)
+ * Muestra el porcentaje de ingresos retenidos mes a mes en los últimos 6 meses.
+ */
+function renderSavingsRateChart(monthlyData) {
+  const canvas = document.getElementById("chart-savings-rate");
+  if (!canvas) return;
+
+  safeDestroyChart(canvas);
+
+  if (!monthlyData || monthlyData.length === 0) {
+    state.charts.savingsRate = new Chart(canvas, {
+      type: "line",
+      data: {
+        labels: ["Sin datos"],
+        datasets: [{ label: "Tasa de Ahorro", data: [0], borderColor: "#cbd5e1" }]
+      },
+      options: { responsive: true, maintainAspectRatio: false }
+    });
+    return;
+  }
+
+  // Calcular tasa de ahorro para cada mes: (ingresos - gastos) / ingresos * 100
+  const labels = monthlyData.map(m => m.mes);
+  const rates = monthlyData.map(m => {
+    const ing = parseFloat(m.ingresos) || 0;
+    const gas = parseFloat(m.gastos) || 0;
+    if (ing <= 0) return 0;
+    const tasa = ((ing - gas) / ing) * 100;
+    return Math.round(tasa * 10) / 10;
+  });
+
+  const pointColors = rates.map(r => r >= 0 ? "#198754" : "#dc3545");
+
+  state.charts.savingsRate = new Chart(canvas, {
+    type: "line",
+    data: {
+      labels: labels,
+      datasets: [{
+        label: "Tasa de Ahorro (%)",
+        data: rates,
+        borderColor: "#1a73e8",
+        backgroundColor: "rgba(26, 115, 232, 0.08)",
+        fill: true,
+        tension: 0.35,
+        pointBackgroundColor: pointColors,
+        pointBorderColor: "#ffffff",
+        pointBorderWidth: 2,
+        pointRadius: 6,
+        pointHoverRadius: 8
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      layout: {
+        padding: { top: 20, left: 10, right: 10, bottom: 5 }
+      },
+      scales: {
+        y: {
+          ticks: {
+            font: { size: 10 },
+            callback: function(val) { return val + "%"; }
+          },
+          grid: {
+            color: "rgba(0, 0, 0, 0.05)"
+          }
+        },
+        x: {
+          ticks: { font: { size: 11 } },
+          grid: { display: false }
+        }
+      },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const r = context.raw;
+              const idx = context.dataIndex;
+              const m = monthlyData[idx];
+              const ahorroNeto = (m.ingresos || 0) - (m.gastos || 0);
+              return [
+                `Tasa de Ahorro: ${r}%`,
+                `Ahorro Neto: ${Utils.formatCurrency(ahorroNeto)}`,
+                `Ingresos: ${Utils.formatCurrency(m.ingresos || 0)} | Gastos: ${Utils.formatCurrency(m.gastos || 0)}`
+              ];
+            }
+          }
+        }
+      }
+    }
+  });
+}
+
+/**
+ * Renderiza el gráfico y desglose de Gastos por Medio de Pago para el período activo.
+ * Se sincroniza automáticamente con el selector de períodos del Dashboard.
+ */
+function renderPaymentMethodsSection(data) {
+  const canvas = document.getElementById("chart-payment-methods");
+  const detailsEl = document.getElementById("dashboard-payment-methods-details");
+  if (!canvas) return;
+
+  safeDestroyChart(canvas);
+
+  let methodsData = [];
+  let totalGastos = 0;
+
+  // Buscar el período activo en el catálogo
+  if (data.periodsCatalog && data.periodsCatalog.length > 0) {
+    const activePeriod = data.periodsCatalog.find(p => p.key === state.selectedDonutPeriod) || data.periodsCatalog[0];
+    methodsData = activePeriod.paymentMethods || [];
+    totalGastos = activePeriod.totalGastos || 0;
+  } else if (data.paymentMethodChart) {
+    methodsData = data.paymentMethodChart;
+    totalGastos = methodsData.reduce((sum, m) => sum + (m.monto || 0), 0);
+  }
+
+  const PM_COLORS = ["#0d9488", "#1a73e8", "#f9ab00", "#e37400", "#7c3aed", "#d93025", "#5f6368"];
+
+  if (!methodsData || methodsData.length === 0) {
+    state.charts.paymentMethods = new Chart(canvas, {
+      type: "doughnut",
+      data: {
+        labels: ["Sin egresos registrados"],
+        datasets: [{ data: [1], backgroundColor: ["#e8eaed"] }]
+      },
+      options: {
+        responsive: true,
+        maintainAspectRatio: false,
+        plugins: { legend: { display: true, position: "bottom" } }
+      }
+    });
+    if (detailsEl) {
+      detailsEl.innerHTML = '<p class="text-secondary small text-center py-2">No hay egresos en este período.</p>';
+    }
+    return;
+  }
+
+  state.charts.paymentMethods = new Chart(canvas, {
+    type: "doughnut",
+    data: {
+      labels: methodsData.map(m => m.medioPago),
+      datasets: [{
+        data: methodsData.map(m => m.monto),
+        backgroundColor: PM_COLORS
+      }]
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      plugins: {
+        legend: {
+          display: true,
+          position: "bottom",
+          labels: { boxWidth: 12, font: { size: 11 } }
+        },
+        tooltip: {
+          callbacks: {
+            label: function(context) {
+              const val = context.raw || 0;
+              const pct = totalGastos > 0 ? ((val / totalGastos) * 100).toFixed(1) : "0.0";
+              return `${context.label}: ${Utils.formatCurrency(val)} (${pct}%)`;
+            }
+          }
+        }
+      }
+    }
+  });
+
+  // Desglose estilo lista con porcentajes
+  if (detailsEl) {
+    detailsEl.innerHTML = "";
+    methodsData.forEach((m, idx) => {
+      const pct = totalGastos > 0 ? ((m.monto / totalGastos) * 100).toFixed(1) : "0.0";
+      const color = PM_COLORS[idx % PM_COLORS.length];
+      detailsEl.innerHTML += `
+        <div class="percentage-item">
+          <div class="percentage-header">
+            <span class="percentage-label" style="display:flex;align-items:center;gap:8px;">
+              <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+              ${m.medioPago}
+            </span>
+            <span class="percentage-values"><strong>${Utils.formatCurrency(m.monto)}</strong> ${pct}%</span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width:${pct}%;background:${color};"></div>
+          </div>
+        </div>`;
+    });
+  }
+}
+
+/**
  * Renderiza el ranking de subcategorías (Top 5) con barras de progreso.
  * Construido a partir del desglose mensual provisto por el backend.
  */
@@ -1707,7 +2012,6 @@ function renderSubcategoryRanking(container, subcatChartData) {
       </div>`;
   });
 }
-
 
 function renderDashboardRecentList(items) {
   const container = document.getElementById("dashboard-recent-list");
@@ -1739,6 +2043,8 @@ function renderDashboardRecentList(items) {
       amountClass = "ahorro";
     }
 
+    const formattedAmount = Utils.formatCurrency(item.MONTO);
+
     card.innerHTML = `
       <div class="tx-icon ${typeClass}" style="width: 32px; height: 32px; font-size: 14px;">${typeIcon}</div>
       <div class="tx-main">
@@ -1749,9 +2055,26 @@ function renderDashboardRecentList(items) {
         <div class="tx-meta" style="font-size: 10px;">${Utils.formatDateReadable(item.FECHA)}</div>
       </div>
       <div class="tx-right">
-        <span class="tx-amount ${amountClass}" style="font-size: 13px;">${amountSign}${Utils.formatCurrency(item.MONTO)}</span>
+        <span class="tx-amount ${amountClass}" style="font-size: 13px;">${amountSign}${formattedAmount}</span>
+        <div class="tx-actions" style="margin-top:2px;">
+          <button type="button" class="btn-edit-tx" data-id="${item.ID}" title="Editar" style="padding: 2px 7px; font-size: 11px;">
+            <span class="material-symbols-rounded" style="font-size:13px;">edit</span>
+          </button>
+          <button type="button" class="btn-delete-tx" data-id="${item.ID}" title="Eliminar" style="padding: 2px 7px; font-size: 11px;">
+            <span class="material-symbols-rounded" style="font-size:13px;">delete</span>
+          </button>
+        </div>
       </div>
     `;
+
+    card.querySelector(".btn-edit-tx").addEventListener("click", () => {
+      loadMovementToEdit(item);
+    });
+
+    card.querySelector(".btn-delete-tx").addEventListener("click", () => {
+      handleDeleteMovement(item.ID, `${item.CATEGORIA} - ${item.SUBCATEGORIA} (${amountSign}${formattedAmount})`);
+    });
+
     container.appendChild(card);
   });
 }
@@ -2215,13 +2538,14 @@ function initEventListeners() {
     });
   }
 
-  // Selector interactivo de período de gastos (Dona)
+  // Selector interactivo de período de gastos (Dona y Medios de Pago)
   const donutPeriodSelect = document.getElementById("donut-period-select");
   if (donutPeriodSelect) {
     donutPeriodSelect.addEventListener("change", (e) => {
       state.selectedDonutPeriod = e.target.value;
       if (state.cachedDashboardData) {
         renderDonutSection(state.cachedDashboardData);
+        renderPaymentMethodsSection(state.cachedDashboardData);
       }
     });
   }
