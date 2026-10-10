@@ -78,6 +78,7 @@ const state = {
   pivotExpandedCategories: {},  // Categorías de la tabla pivot actualmente desplegadas
   pivotExpandAll: false,        // Estado de expandir/colapsar todas
   pivotMode: "months",          // Modo temporal de la tabla pivot ("months" | "years")
+  privacyMode: getStoredItem("finance_privacy_mode") === "true", // Modo Privacidad (Ocultar/Mostrar importes)
 
   charts: {
     categories: null,
@@ -387,6 +388,9 @@ function showView(viewId) {
     } else if (viewId === "view-projections") {
       resetProjectionForm();
       loadProjectionsView();
+    } else if (viewId === "view-reminders") {
+      resetReminderForm();
+      loadRemindersView();
     }
   }
 }
@@ -1227,14 +1231,7 @@ function renderDashboard(data) {
     console.error("Error al renderizar gráfico de tasa de ahorro:", e);
   }
 
-  // 7. Nuevo Gráfico: Gastos por Medio de Pago
-  try {
-    renderPaymentMethodsSection(data);
-  } catch (e) {
-    console.error("Error al renderizar gastos por medio de pago:", e);
-  }
-
-  // 8. Últimos Movimientos
+  // 7. Últimos Movimientos
   try {
     renderDashboardRecentList(data.ultimosMovimientos || []);
   } catch (e) {
@@ -2545,7 +2542,6 @@ function initEventListeners() {
       state.selectedDonutPeriod = e.target.value;
       if (state.cachedDashboardData) {
         renderDonutSection(state.cachedDashboardData);
-        renderPaymentMethodsSection(state.cachedDashboardData);
       }
     });
   }
@@ -2598,10 +2594,336 @@ function initEventListeners() {
       }
     });
   }
+
+  // Modo Privacidad ("Ojo de Seguridad")
+  const btnTogglePrivacy = document.getElementById("btn-toggle-privacy");
+  if (btnTogglePrivacy) {
+    btnTogglePrivacy.addEventListener("click", togglePrivacyMode);
+  }
+  const btnTogglePrivacyDash = document.getElementById("btn-toggle-privacy-dash");
+  if (btnTogglePrivacyDash) {
+    btnTogglePrivacyDash.addEventListener("click", togglePrivacyMode);
+  }
+  updatePrivacyIcon();
+
+  // PENDIENTES Y RECORDATORIOS
+  const btnToggleNewRem = document.getElementById("btn-toggle-new-reminder");
+  if (btnToggleNewRem) {
+    btnToggleNewRem.addEventListener("click", () => {
+      const card = document.getElementById("card-form-reminder");
+      card.classList.toggle("hidden");
+      if (!card.classList.contains("hidden")) {
+        populateReminderCategories();
+      }
+    });
+  }
+
+  const btnCloseRemForm = document.getElementById("btn-close-reminder-form");
+  if (btnCloseRemForm) {
+    btnCloseRemForm.addEventListener("click", () => {
+      document.getElementById("card-form-reminder").classList.add("hidden");
+      resetReminderForm();
+    });
+  }
+
+  const btnCancelRem = document.getElementById("btn-cancel-reminder");
+  if (btnCancelRem) {
+    btnCancelRem.addEventListener("click", () => {
+      document.getElementById("card-form-reminder").classList.add("hidden");
+      resetReminderForm();
+    });
+  }
+
+  const remCatSelect = document.getElementById("rem-categoria");
+  if (remCatSelect) {
+    remCatSelect.addEventListener("change", handleReminderCategoryChange);
+  }
+
+  const formReminder = document.getElementById("form-reminder");
+  if (formReminder) {
+    formReminder.addEventListener("submit", handleSaveReminder);
+  }
 }
 
 // ==========================================================================
-// PROYECCIONES DE FIN DE MES
+// PENDIENTES Y RECORDATORIOS (CHECKLIST MENSUAL)
+// ==========================================================================
+
+/**
+ * Rellena las categorías de tipo Egreso en el formulario de recordatorio.
+ */
+function populateReminderCategories() {
+  const select = document.getElementById("rem-categoria");
+  if (!select) return;
+  select.innerHTML = '<option value="">Selecciona categoría...</option>';
+
+  if (!state.catalog || !state.catalog.categories) return;
+
+  const egresos = state.catalog.categories.filter(c => c.TIPO === "Egreso" && c.ESTADO === "Activo");
+  egresos.forEach(c => {
+    const opt = document.createElement("option");
+    opt.value = c.NOMBRE;
+    opt.dataset.id = c.ID_CATEGORIA;
+    opt.textContent = c.NOMBRE;
+    select.appendChild(opt);
+  });
+
+  const subSelect = document.getElementById("rem-subcategoria");
+  if (subSelect) {
+    subSelect.innerHTML = '<option value="">Selecciona subcategoría...</option>';
+    subSelect.disabled = true;
+  }
+}
+
+/**
+ * Cascada de categoría a subcategoría para recordatorios.
+ */
+function handleReminderCategoryChange(e) {
+  const selectedOpt = e.target.options[e.target.selectedIndex];
+  const subSelect = document.getElementById("rem-subcategoria");
+  if (!subSelect) return;
+
+  subSelect.innerHTML = '<option value="">Selecciona subcategoría...</option>';
+  subSelect.disabled = true;
+
+  if (!selectedOpt || !selectedOpt.dataset.id) return;
+  const catId = selectedOpt.dataset.id;
+  const subs = (state.catalog.subcategories || []).filter(s => s.ID_CATEGORIA === catId && s.ESTADO === "Activo");
+
+  if (subs.length > 0) {
+    subs.forEach(s => {
+      const opt = document.createElement("option");
+      opt.value = s.NOMBRE;
+      opt.dataset.id = s.ID_SUBCATEGORIA;
+      opt.textContent = s.NOMBRE;
+      subSelect.appendChild(opt);
+    });
+    subSelect.disabled = false;
+  }
+}
+
+/**
+ * Resetea el formulario de recordatorios.
+ */
+function resetReminderForm() {
+  const form = document.getElementById("form-reminder");
+  if (form) form.reset();
+  const idInput = document.getElementById("rem-id");
+  if (idInput) idInput.value = "";
+  const subSelect = document.getElementById("rem-subcategoria");
+  if (subSelect) {
+    subSelect.innerHTML = '<option value="">Selecciona subcategoría...</option>';
+    subSelect.disabled = true;
+  }
+}
+
+/**
+ * Carga los recordatorios desde el backend y los dibuja en pantalla.
+ */
+async function loadRemindersView() {
+  showLoader("Cargando pendientes y recordatorios...");
+  try {
+    const response = await apiRequest("getReminders");
+    if (response.success) {
+      renderRemindersList(response.data || []);
+    } else {
+      alert("Error al cargar recordatorios: " + response.message);
+    }
+  } catch (err) {
+    console.error("Error al cargar recordatorios:", err);
+    alert("Error de conexión al cargar recordatorios.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Renderiza las tarjetas de recordatorios con sus colores y estados.
+ * Estados:
+ * - status-overdue: Vencido de meses anteriores (Fondo Rojo Claro)
+ * - status-pending: Pendiente mensual en curso (Fondo Base de la app)
+ * - status-paid: Pagado en el mes actual (Fondo Verde Claro)
+ */
+function renderRemindersList(items) {
+  const container = document.getElementById("reminders-list");
+  const totalPendingEl = document.getElementById("reminders-total-pending");
+  if (!container) return;
+
+  container.innerHTML = "";
+
+  if (!items || items.length === 0) {
+    container.innerHTML = `
+      <div class="card text-center text-secondary py-4" style="padding: 24px;">
+        <span class="material-symbols-rounded" style="font-size:36px;color:var(--text-secondary);margin-bottom:8px;">checklist</span>
+        <p>No tienes recordatorios configurados aún.</p>
+        <p class="small">Toca el botón <strong>+</strong> arriba para agregar tus pagos fijos (alquiler, impuestos, cuotas, etc.).</p>
+      </div>`;
+    if (totalPendingEl) totalPendingEl.innerText = Utils.formatCurrency(0);
+    return;
+  }
+
+  let totalPendiente = 0;
+
+  items.forEach(item => {
+    // Calcular suma pendiente (solo lo no pagado: overdue o pending)
+    if (item.estadoCalculado !== "paid") {
+      totalPendiente += parseFloat(item.montoEstimado) || 0;
+    }
+
+    const card = document.createElement("div");
+    card.className = `reminder-card status-${item.estadoCalculado}`;
+
+    let estadoTag = "";
+    if (item.estadoCalculado === "overdue") {
+      estadoTag = `<span class="reminder-tag">Vencido (${item.mesNombre || "anterior"})</span>`;
+    } else if (item.estadoCalculado === "paid") {
+      estadoTag = `<span class="reminder-tag">Pagado este mes</span>`;
+    } else {
+      estadoTag = `<span class="reminder-tag">Pendiente del mes</span>`;
+    }
+
+    const montoFormateado = Utils.formatCurrency(item.montoEstimado);
+    const montoNota = item.esPromedio ? "prom. 3 meses" : "monto fijo";
+
+    const commentHtml = item.comentario ? `<div class="reminder-comment">${escapeHtml(item.comentario)}</div>` : "";
+
+    // Botones de acción:
+    // Si está vencido de un mes anterior, el usuario puede descartarlo manualmente para este período
+    let dismissBtn = "";
+    if (item.estadoCalculado === "overdue") {
+      dismissBtn = `
+        <button type="button" class="btn-reminder-action btn-dismiss" onclick="handleDismissReminder('${item.id}', '${item.mesClave || ''}')">
+          <span class="material-symbols-rounded" style="font-size:16px;">visibility_off</span>
+          Descartar impago
+        </button>`;
+    }
+
+    const deleteBtn = `
+      <button type="button" class="btn-reminder-action btn-delete" onclick="handleDeleteReminder('${item.id}')" title="Eliminar recordatorio recurrente">
+        <span class="material-symbols-rounded" style="font-size:16px;">delete</span>
+        Eliminar
+      </button>`;
+
+    card.innerHTML = `
+      <div class="reminder-header-row">
+        <div class="reminder-info">
+          <div class="reminder-concept">${escapeHtml(item.subcategoria)}</div>
+          <div class="text-secondary small" style="margin-bottom: 2px;">${escapeHtml(item.categoria)}</div>
+          ${commentHtml}
+          <div class="reminder-meta">
+            ${estadoTag}
+          </div>
+        </div>
+        <div class="reminder-amount-col">
+          <span class="reminder-amount">${montoFormateado}</span>
+          <span class="reminder-amount-note">${montoNota}</span>
+        </div>
+      </div>
+      <div class="reminder-actions-row">
+        ${dismissBtn}
+        ${deleteBtn}
+      </div>
+    `;
+
+    container.appendChild(card);
+  });
+
+  if (totalPendingEl) {
+    totalPendingEl.innerText = Utils.formatCurrency(totalPendiente);
+  }
+}
+
+/**
+ * Guarda o actualiza un recordatorio recurrente.
+ */
+async function handleSaveReminder(e) {
+  e.preventDefault();
+  const cat = document.getElementById("rem-categoria").value.trim();
+  const sub = document.getElementById("rem-subcategoria").value.trim();
+  const com = document.getElementById("rem-comentario").value.trim();
+  const montoInput = document.getElementById("rem-monto").value.trim();
+
+  if (!cat || !sub) {
+    alert("Selecciona la categoría y subcategoría.");
+    return;
+  }
+
+  showLoader("Guardando recordatorio...");
+  try {
+    const payload = {
+      categoria: cat,
+      subcategoria: sub,
+      comentario: com,
+      montoEstimado: montoInput ? parseFloat(montoInput) : 0
+    };
+
+    const response = await apiRequest("saveReminder", payload);
+    if (response.success) {
+      document.getElementById("card-form-reminder").classList.add("hidden");
+      resetReminderForm();
+      loadRemindersView();
+    } else {
+      alert("Error: " + response.message);
+    }
+  } catch (err) {
+    alert("Error de conexión al guardar el recordatorio.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Elimina una regla de recordatorio recurrente.
+ */
+window.handleDeleteReminder = async function(id) {
+  if (!confirm("¿Deseas eliminar este recordatorio recurrente?")) return;
+  showLoader("Eliminando recordatorio...");
+  try {
+    const response = await apiRequest("deleteReminder", { id: id });
+    if (response.success) {
+      loadRemindersView();
+    } else {
+      alert("Error: " + response.message);
+    }
+  } catch (err) {
+    alert("Error de conexión al eliminar.");
+  } finally {
+    hideLoader();
+  }
+};
+
+/**
+ * Descarta manualmente una ocurrencia impaga anterior para que no moleste más en la lista.
+ */
+window.handleDismissReminder = async function(idRecordatorio, mesClave) {
+  if (!confirm("¿Descartar este pendiente anterior para que ya no aparezca?")) return;
+  showLoader("Descartando pendiente...");
+  try {
+    const response = await apiRequest("dismissReminderOccurrence", {
+      idRecordatorio: idRecordatorio,
+      mesClave: mesClave
+    });
+    if (response.success) {
+      loadRemindersView();
+    } else {
+      alert("Error: " + response.message);
+    }
+  } catch (err) {
+    alert("Error de conexión al descartar.");
+  } finally {
+    hideLoader();
+  }
+};
+
+/**
+ * Escapa HTML para prevenir inyecciones.
+ */
+function escapeHtml(text) {
+  if (!text) return "";
+  const div = document.createElement("div");
+  div.textContent = text;
+  return div.innerHTML;
+}
 // ==========================================================================
 
 /**
@@ -2920,6 +3242,9 @@ const Utils = {
   },
 
   formatCurrency: function(monto) {
+    if (state.privacyMode) {
+      return "••••••";
+    }
     const val = parseFloat(monto) || 0;
     return new Intl.NumberFormat("es-AR", {
       style: "currency",
@@ -2929,6 +3254,9 @@ const Utils = {
   },
 
   formatCompactCurrency: function(monto) {
+    if (state.privacyMode) {
+      return "••••••";
+    }
     const val = parseFloat(monto) || 0;
     const absVal = Math.abs(val);
     const sign = val < 0 ? "-" : "";
@@ -2943,6 +3271,44 @@ const Utils = {
     return sign + "$" + Math.round(absVal).toLocaleString("es-AR");
   }
 };
+
+/**
+ * Conmuta el modo de privacidad ocultando o mostrando los importes sensibles.
+ */
+function togglePrivacyMode() {
+  state.privacyMode = !state.privacyMode;
+  setStoredItem("finance_privacy_mode", state.privacyMode ? "true" : "false");
+  updatePrivacyIcon();
+  
+  // Refrescar vistas activas en pantalla
+  if (state.cachedDashboardData) {
+    renderDashboard(state.cachedDashboardData);
+  }
+  const currentView = document.querySelector(".view.active");
+  if (currentView) {
+    if (currentView.id === "view-reminders") {
+      loadRemindersView();
+    } else if (currentView.id === "view-projections") {
+      loadProjectionsView();
+    }
+  }
+}
+
+/**
+ * Actualiza el icono del ojo de seguridad en todos los encabezados.
+ */
+function updatePrivacyIcon() {
+  const icon = document.getElementById("icon-privacy");
+  if (icon) {
+    icon.textContent = state.privacyMode ? "visibility_off" : "visibility";
+    icon.title = state.privacyMode ? "Mostrar montos" : "Ocultar montos";
+  }
+  const iconDash = document.getElementById("icon-privacy-dash");
+  if (iconDash) {
+    iconDash.textContent = state.privacyMode ? "visibility_off" : "visibility";
+    iconDash.title = state.privacyMode ? "Mostrar montos" : "Ocultar montos";
+  }
+}
 
 /**
  * Genera un UUID v4 básico para identificar dispositivos.

@@ -116,6 +116,11 @@
           <span class="family-label" id="home-family-name">Cargando...</span>
           <h1 id="home-greeting">Hola, Usuario</h1>
         </div>
+        <div class="header-actions">
+          <button type="button" id="btn-toggle-privacy" class="btn-icon btn-privacy-toggle" title="Ocultar / Mostrar montos">
+            <span class="material-symbols-rounded" id="icon-privacy">visibility</span>
+          </button>
+        </div>
       </header>
       <main class="view-content menu-grid">
         <button class="menu-card" data-target="view-add-movement">
@@ -136,6 +141,17 @@
           <div class="menu-info">
             <h3>Buscar Movimientos</h3>
             <p>Filtra el historial y edita transacciones.</p>
+          </div>
+          <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
+        </button>
+
+        <button class="menu-card" data-target="view-reminders">
+          <div class="menu-icon icon-reminders">
+            <span class="material-symbols-rounded">checklist</span>
+          </div>
+          <div class="menu-info">
+            <h3>Pendientes y Recordatorios</h3>
+            <p>Controla tus pagos fijos y compromisos del mes.</p>
           </div>
           <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
         </button>
@@ -344,9 +360,14 @@
           <h1 style="margin: 0; line-height: 1.2;">Dashboard Mensual</h1>
           <p id="dashboard-current-month-badge" class="subtitle-small" style="margin: 2px 0 0; color: var(--text-secondary); font-size: 11px;">Mes en curso (los movimientos se imputan según su fecha real)</p>
         </div>
-        <button type="button" id="btn-refresh-dashboard" class="btn-icon" title="Actualizar datos" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
-          <span class="material-symbols-rounded">refresh</span>
-        </button>
+        <div style="display: flex; align-items: center; gap: 4px;">
+          <button type="button" id="btn-toggle-privacy-dash" class="btn-icon btn-privacy-toggle" title="Ocultar / Mostrar montos" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
+            <span class="material-symbols-rounded" id="icon-privacy-dash">visibility</span>
+          </button>
+          <button type="button" id="btn-refresh-dashboard" class="btn-icon" title="Actualizar datos" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
+            <span class="material-symbols-rounded">refresh</span>
+          </button>
+        </div>
       </header>
       <main class="view-content">
         <!-- Saldo Disponible (Principal) -->
@@ -488,18 +509,6 @@
             <p class="subtitle-small">Capacidad de ahorro histórica sobre ingresos en los últimos 6 meses.</p>
             <div class="chart-wrapper">
               <canvas id="chart-savings-rate"></canvas>
-            </div>
-          </div>
-
-          <!-- NUEVO: Gastos por Medio de Pago -->
-          <div class="chart-card">
-            <h4>Gastos por Medio de Pago</h4>
-            <p class="subtitle-small">Distribución de egresos según la forma de pago en el período seleccionado.</p>
-            <div class="chart-wrapper">
-              <canvas id="chart-payment-methods"></canvas>
-            </div>
-            <div id="dashboard-payment-methods-details" class="category-percentage-list">
-              <!-- Cargado dinámicamente -->
             </div>
           </div>
         </section>
@@ -656,6 +665,79 @@
 
         </section>
 
+      </main>
+    </div>
+
+    <!-- 8.5 PENDIENTES Y RECORDATORIOS -->
+    <div id="view-reminders" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <h1>Pendientes y Recordatorios</h1>
+        <div class="header-actions">
+          <button type="button" id="btn-toggle-new-reminder" class="btn-icon" title="Nuevo Recordatorio">
+            <span class="material-symbols-rounded">add</span>
+          </button>
+        </div>
+      </header>
+
+      <!-- Referencia visual / leyenda -->
+      <section class="reminder-legend card">
+        <div class="legend-item"><span class="legend-badge badge-overdue"></span> Vencido anterior</div>
+        <div class="legend-item"><span class="legend-badge badge-pending"></span> Pendiente del mes</div>
+        <div class="legend-item"><span class="legend-badge badge-paid"></span> Pagado este mes</div>
+      </section>
+
+      <!-- Formulario para Agregar/Editar Recordatorio (Ocultable) -->
+      <section class="card hidden" id="card-form-reminder">
+        <div class="card-header-flex">
+          <h3 id="reminder-form-title">Nuevo Recordatorio Recurrente</h3>
+          <button type="button" class="btn-icon-small" id="btn-close-reminder-form">
+            <span class="material-symbols-rounded">close</span>
+          </button>
+        </div>
+        <form id="form-reminder" class="form-container">
+          <input type="hidden" id="rem-id">
+          <div class="form-group">
+            <label for="rem-categoria">Categoría</label>
+            <select id="rem-categoria" required>
+              <option value="">Selecciona categoría...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="rem-subcategoria">Subcategoría</label>
+            <select id="rem-subcategoria" required disabled>
+              <option value="">Selecciona subcategoría...</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label for="rem-comentario">Comentario / Ayudamemoria (máx 40 caracteres)</label>
+            <input type="text" id="rem-comentario" maxlength="40" placeholder="Ej: Vence el 10, Débito automático">
+          </div>
+          <div class="form-group">
+            <label for="rem-monto">Monto Estimado Fijo (opcional)</label>
+            <div class="monto-input-wrapper">
+              <span class="monto-currency">$</span>
+              <input type="number" id="rem-monto" placeholder="Dejar vacío para usar prom. 3 meses" step="0.01" min="0" inputmode="decimal">
+            </div>
+            <small class="text-secondary">Si se deja vacío, la app calcula el promedio pagado en los últimos 3 meses.</small>
+          </div>
+          <div class="form-row">
+            <button type="button" class="btn btn-secondary col-6" id="btn-cancel-reminder">Cancelar</button>
+            <button type="submit" class="btn btn-primary col-6" id="btn-save-reminder">Guardar</button>
+          </div>
+        </form>
+      </section>
+
+      <!-- Listado de Recordatorios -->
+      <main class="view-content mt-3">
+        <div id="reminders-summary-bar" class="reminders-summary-bar mb-3">
+          <span>Total estimado pendiente: <strong id="reminders-total-pending">$ 0</strong></span>
+        </div>
+        <div class="reminders-list" id="reminders-list">
+          <!-- Cargados por JS -->
+        </div>
       </main>
     </div>
 
