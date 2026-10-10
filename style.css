@@ -180,6 +180,32 @@ body {
   margin-bottom: 24px;
 }
 
+.brand-header-flex {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+}
+
+.app-brand-logo {
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  box-shadow: var(--shadow-sm);
+  object-fit: cover;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
+.app-setup-logo {
+  width: 76px;
+  height: 76px;
+  border-radius: 20px;
+  box-shadow: var(--shadow-md);
+  object-fit: cover;
+  display: inline-block;
+  margin-bottom: 14px;
+  border: 1px solid rgba(0, 0, 0, 0.06);
+}
+
 .family-label {
   font-size: 11px;
   text-transform: uppercase;
