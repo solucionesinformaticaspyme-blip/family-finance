@@ -353,6 +353,39 @@ function updateUiMeta() {
       configBtn.classList.add("hidden");
     }
   }
+
+  updateHomeBalance();
+}
+
+/**
+ * Actualiza la tarjeta de saldo disponible en la pantalla principal.
+ */
+async function updateHomeBalance() {
+  const saldoEl = document.getElementById("home-saldo-amount");
+  if (!saldoEl) return;
+
+  if (state.lastDashboardKpis && state.lastDashboardKpis.saldo !== undefined && !state.dashboardNeedsRefresh) {
+    saldoEl.innerText = Utils.formatCurrency(state.lastDashboardKpis.saldo);
+    return;
+  }
+
+  // Si no está en memoria o requiere refresco, consultar silently
+  if (state.apiUrl && state.deviceToken) {
+    try {
+      const res = await apiRequest("getDashboard");
+      if (res && res.success && res.data && res.data.kpis) {
+        state.cachedDashboardData = res.data;
+        state.dashboardNeedsRefresh = false;
+        state.lastDashboardKpis = res.data.kpis;
+        saldoEl.innerText = Utils.formatCurrency(res.data.kpis.saldo);
+      }
+    } catch (e) {
+      // Si falla silencio, mantener último o guion
+      if (state.lastDashboardKpis) {
+        saldoEl.innerText = Utils.formatCurrency(state.lastDashboardKpis.saldo);
+      }
+    }
+  }
 }
 
 // ==========================================================================
@@ -374,6 +407,7 @@ function showView(viewId) {
     
     // Acciones específicas al cargar ciertas pantallas
     if (viewId === "view-home") {
+      updateHomeBalance();
       refreshCatalogSilently(); // Refrescar catálogos y validar estado en segundo plano de forma silenciosa
     } else if (viewId === "view-add-movement" && !state.editingId) {
       resetMovementForm();
@@ -2480,10 +2514,13 @@ function initEventListeners() {
     );
   });
 
-  // Dashboard: card de Proyectados → ir a gestionar proyecciones
-  document.getElementById("kpi-proyectado-card").addEventListener("click", () => {
-    showView("view-projections");
-  });
+  // Dashboard: card de Proyectados (opcional si existe)
+  const kpiProjCard = document.getElementById("kpi-proyectado-card");
+  if (kpiProjCard) {
+    kpiProjCard.addEventListener("click", () => {
+      showView("view-projections");
+    });
+  }
 
   // Proyecciones: formulario de guardado
   document.getElementById("form-projection").addEventListener("submit", handleSaveProjection);
@@ -2642,6 +2679,20 @@ function initEventListeners() {
   const formReminder = document.getElementById("form-reminder");
   if (formReminder) {
     formReminder.addEventListener("submit", handleSaveReminder);
+
+    // Radios de periodicidad: mostrar u ocultar selector de meses
+    document.querySelectorAll('input[name="rem-periodicidad"]').forEach(r => {
+      r.addEventListener("change", (e) => {
+        const picker = document.getElementById("rem-months-picker");
+        if (picker) {
+          if (e.target.value === "personalizado") {
+            picker.classList.remove("hidden");
+          } else {
+            picker.classList.add("hidden");
+          }
+        }
+      });
+    });
   }
 }
 
@@ -2715,6 +2766,11 @@ function resetReminderForm() {
     subSelect.innerHTML = '<option value="">Selecciona subcategoría...</option>';
     subSelect.disabled = true;
   }
+  const picker = document.getElementById("rem-months-picker");
+  if (picker) picker.classList.add("hidden");
+  document.querySelectorAll('input[name="rem-month"]').forEach(chk => { chk.checked = false; });
+  const radioDefault = document.getElementById("rem-per-mensual");
+  if (radioDefault) radioDefault.checked = true;
 }
 
 /**
@@ -2742,7 +2798,7 @@ async function loadRemindersView() {
  * Estados:
  * - status-overdue: Vencido de meses anteriores (Fondo Rojo Claro)
  * - status-pending: Pendiente mensual en curso (Fondo Base de la app)
- * - status-paid: Pagado en el mes actual (Fondo Verde Claro)
+ * - status-paid: Pagado en el mes actual (Fondo Verde Claro + Tachado)
  */
 function renderRemindersList(items) {
   const container = document.getElementById("reminders-list");
@@ -2773,44 +2829,56 @@ function renderRemindersList(items) {
     const card = document.createElement("div");
     card.className = `reminder-card status-${item.estadoCalculado}`;
 
+    // Etiqueta del período (Mes al que corresponde el compromiso)
+    const periodBadge = item.mesNombre ? `<span class="reminder-period-badge">${escapeHtml(item.mesNombre)}</span>` : "";
+
     let estadoTag = "";
     if (item.estadoCalculado === "overdue") {
-      estadoTag = `<span class="reminder-tag">Vencido (${item.mesNombre || "anterior"})</span>`;
+      estadoTag = `<span class="reminder-tag">Vencido</span>`;
     } else if (item.estadoCalculado === "paid") {
-      estadoTag = `<span class="reminder-tag">Pagado este mes</span>`;
+      const notaPago = item.isManualPaid ? "Tildado manual" : "Registrado en planilla";
+      estadoTag = `<span class="reminder-tag">Completado (${notaPago})</span>`;
     } else {
-      estadoTag = `<span class="reminder-tag">Pendiente del mes</span>`;
+      estadoTag = `<span class="reminder-tag">Pendiente</span>`;
     }
 
-    const montoFormateado = Utils.formatCurrency(item.montoEstimado);
+    const montoFormateado = Utils.formatCurrency(item.montoEstimado || item.monto);
     const montoNota = item.esPromedio ? "prom. 3 meses" : "monto fijo";
 
-    const commentHtml = item.comentario ? `<div class="reminder-comment">${escapeHtml(item.comentario)}</div>` : "";
+    const commentHtml = item.concepto || item.comentario ? `<div class="reminder-comment">${escapeHtml(item.concepto || item.comentario)}</div>` : "";
 
-    // Botones de acción:
-    // Si está vencido de un mes anterior, el usuario puede descartarlo manualmente para este período
+    // Botón / Checkbox de tildar pago manual
+    const isPaidChecked = (item.estadoCalculado === "paid");
+    const checkBtnIcon = isPaidChecked ? "check" : "";
+    const checkBtnTitle = isPaidChecked ? "Destildar (marcar pendiente)" : "Marcar como pagado";
+
+    // Botón para descartar impago viejo
     let dismissBtn = "";
-    if (item.estadoCalculado === "overdue") {
+    if (item.estadoCalculado === "overdue" || item.canDismiss) {
       dismissBtn = `
-        <button type="button" class="btn-reminder-action btn-dismiss" onclick="handleDismissReminder('${item.id}', '${item.mesClave || ''}')">
+        <button type="button" class="btn-reminder-action btn-dismiss" onclick="handleDismissReminder('${item.id}', '${item.periodo || item.mesClave || ''}')">
           <span class="material-symbols-rounded" style="font-size:16px;">visibility_off</span>
           Descartar impago
         </button>`;
     }
 
     const deleteBtn = `
-      <button type="button" class="btn-reminder-action btn-delete" onclick="handleDeleteReminder('${item.id}')" title="Eliminar recordatorio recurrente">
+      <button type="button" class="btn-reminder-action btn-delete" onclick="handleDeleteReminder('${item.id}')" title="Eliminar regla recurrente">
         <span class="material-symbols-rounded" style="font-size:16px;">delete</span>
         Eliminar
       </button>`;
 
     card.innerHTML = `
-      <div class="reminder-header-row">
+      <div class="reminder-header-row" style="align-items: center; gap: 12px;">
+        <button type="button" class="reminder-check-btn" onclick="handleToggleReminderCheck('${item.id}', '${item.periodo || ''}')" title="${checkBtnTitle}">
+          <span class="material-symbols-rounded" style="font-size:18px;">${checkBtnIcon}</span>
+        </button>
         <div class="reminder-info">
           <div class="reminder-concept">${escapeHtml(item.subcategoria)}</div>
           <div class="text-secondary small" style="margin-bottom: 2px;">${escapeHtml(item.categoria)}</div>
           ${commentHtml}
-          <div class="reminder-meta">
+          <div class="reminder-meta" style="margin-top: 4px;">
+            ${periodBadge}
             ${estadoTag}
           </div>
         </div>
@@ -2842,6 +2910,25 @@ async function handleSaveReminder(e) {
   const sub = document.getElementById("rem-subcategoria").value.trim();
   const com = document.getElementById("rem-comentario").value.trim();
   const montoInput = document.getElementById("rem-monto").value.trim();
+  const periodicidad = document.querySelector('input[name="rem-periodicidad"]:checked').value;
+
+  let meses = "";
+  if (periodicidad === "personalizado") {
+    const selectedMonths = [];
+    document.querySelectorAll('input[name="rem-month"]:checked').forEach(chk => {
+      selectedMonths.push(chk.value);
+    });
+    if (selectedMonths.length === 0) {
+      alert("Selecciona al menos un mes para la opción de meses específicos.");
+      return;
+    }
+    meses = selectedMonths.join(",");
+  } else if (periodicidad === "unico") {
+    // Mes actual YYYY-MM
+    const now = new Date();
+    const mm = String(now.getMonth() + 1).padStart(2, '0');
+    meses = `${now.getFullYear()}-${mm}`;
+  }
 
   if (!cat || !sub) {
     alert("Selecciona la categoría y subcategoría.");
@@ -2854,7 +2941,10 @@ async function handleSaveReminder(e) {
       categoria: cat,
       subcategoria: sub,
       comentario: com,
-      montoEstimado: montoInput ? parseFloat(montoInput) : 0
+      concepto: com,
+      montoEstimado: montoInput ? parseFloat(montoInput) : 0,
+      periodicidad: periodicidad,
+      meses: meses
     };
 
     const response = await apiRequest("saveReminder", payload);
@@ -2871,6 +2961,28 @@ async function handleSaveReminder(e) {
     hideLoader();
   }
 }
+
+/**
+ * Tilda o destilda manualmente un recordatorio como pagado en un período.
+ */
+window.handleToggleReminderCheck = async function(id, periodo) {
+  showLoader("Actualizando estado...");
+  try {
+    const response = await apiRequest("toggleReminderManualPayment", {
+      id: id,
+      periodo: periodo
+    });
+    if (response && response.success) {
+      loadRemindersView();
+    } else {
+      alert("Error: " + (response ? response.message : "No se pudo actualizar"));
+    }
+  } catch (err) {
+    alert("Error de conexión al actualizar estado.");
+  } finally {
+    hideLoader();
+  }
+};
 
 /**
  * Elimina una regla de recordatorio recurrente.
@@ -3281,6 +3393,7 @@ function togglePrivacyMode() {
   updatePrivacyIcon();
   
   // Refrescar vistas activas en pantalla
+  updateHomeBalance();
   if (state.cachedDashboardData) {
     renderDashboard(state.cachedDashboardData);
   }

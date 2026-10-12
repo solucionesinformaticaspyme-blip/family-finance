@@ -1580,17 +1580,19 @@ select:disabled {
   position: -webkit-sticky;
   position: sticky;
   left: 0;
-  z-index: 5;
+  z-index: 10;
   text-align: left;
-  max-width: 195px;
-  min-width: 160px;
-  background-color: #ffffff;
-  box-shadow: 2px 0 6px rgba(0, 0, 0, 0.08);
+  max-width: 210px;
+  min-width: 165px;
+  background-color: #FFFFFF;
+  background-clip: padding-box;
+  border-right: 2px solid #CBD5E1 !important;
+  box-shadow: 4px 0 10px rgba(0, 0, 0, 0.08);
 }
 
 .pivot-table th:first-child {
-  background-color: #f8fafc;
-  z-index: 10;
+  background-color: #F8FAFC !important;
+  z-index: 15;
 }
 
 /* Filas de Secciones (Ingresos / Gastos) */
@@ -1606,8 +1608,8 @@ select:disabled {
 }
 
 .pivot-section-hdr td:first-child {
-  background-color: #edf2f7 !important;
-  z-index: 6;
+  background-color: #EDF2F7 !important;
+  z-index: 12;
 }
 
 /* Filas de Categorías (Nivel 1) */
@@ -1620,14 +1622,14 @@ select:disabled {
 }
 
 .pivot-row-cat td:first-child {
-  background-color: #ffffff;
-  z-index: 5;
+  background-color: #FFFFFF !important;
+  z-index: 10;
   white-space: nowrap;
 }
 
 .pivot-row-cat:hover td,
 .pivot-row-cat:hover td:first-child {
-  background-color: #f8fafc !important;
+  background-color: #F8FAFC !important;
 }
 
 .pivot-cat-inner {
@@ -1978,6 +1980,169 @@ select:disabled {
   letter-spacing: 2px;
   font-weight: 700 !important;
   user-select: none;
+}
+
+/* ==========================================================================
+   TARJETA DE SALDO EN PANTALLA PRINCIPAL
+   ========================================================================== */
+
+.home-balance-card {
+  margin-bottom: 18px;
+  padding: 16px 20px;
+  background: #FFFFFF;
+  border: 1.5px solid var(--border-color);
+  border-radius: var(--radius-md);
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+}
+
+.home-balance-info {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.home-balance-label {
+  font-size: 11.5px;
+  font-weight: 700;
+  text-transform: uppercase;
+  color: var(--text-secondary);
+  letter-spacing: 0.6px;
+}
+
+.home-balance-val {
+  font-size: 24px;
+  font-weight: 800;
+  color: var(--primary-color);
+  letter-spacing: -0.5px;
+}
+
+/* ==========================================================================
+   RECORDATORIOS: ESTILO TACHADO, TILDE Y MESES
+   ========================================================================== */
+
+.reminder-card.status-paid .reminder-concept {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.reminder-card.status-paid .reminder-comment {
+  opacity: 0.65;
+}
+
+.reminder-card.status-paid .reminder-amount {
+  text-decoration: line-through;
+  opacity: 0.75;
+}
+
+.reminder-check-btn {
+  background: #FFFFFF;
+  border: 1.5px solid #CBD5E1;
+  width: 28px;
+  height: 28px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  cursor: pointer;
+  flex-shrink: 0;
+  transition: all 0.15s ease;
+  color: transparent;
+}
+
+.reminder-card.status-paid .reminder-check-btn {
+  background: #22C55E;
+  border-color: #22C55E;
+  color: #FFFFFF;
+}
+
+.reminder-check-btn:active {
+  transform: scale(0.9);
+}
+
+.reminder-period-badge {
+  font-size: 10.5px;
+  font-weight: 700;
+  padding: 2px 6px;
+  border-radius: 4px;
+  background-color: #E2E8F0;
+  color: #475569;
+  letter-spacing: 0.3px;
+}
+
+.reminder-card.status-overdue .reminder-period-badge {
+  background-color: #FEE2E2;
+  color: #B91C1C;
+  border: 1px solid #FECACA;
+}
+
+/* Selector de 12 meses */
+.months-selector-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 8px;
+  margin-top: 8px;
+}
+
+.month-chip {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: #FFFFFF;
+  border: 1px solid var(--border-color);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 12px;
+  font-weight: 600;
+  cursor: pointer;
+}
+
+.month-chip input[type="checkbox"] {
+  accent-color: var(--primary-color);
+  cursor: pointer;
+}
+
+/* ==========================================================================
+   MODO APAISADO (HORIZONTAL / LANDSCAPE) FULL WIDTH
+   ========================================================================== */
+
+@media (orientation: landscape) and (min-width: 600px), (min-width: 820px) {
+  #app-container {
+    max-width: 100% !important;
+    width: 100% !important;
+    border-radius: 0;
+    box-shadow: none;
+    min-height: 100vh;
+  }
+
+  body {
+    background-color: var(--bg-color);
+  }
+
+  .view {
+    max-width: 1100px;
+    margin: 0 auto;
+    padding: 24px 32px;
+  }
+
+  .pivot-table-wrapper {
+    margin: 0;
+    padding: 0;
+  }
+
+  .menu-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .kpis-section {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(220px, 1fr));
+    gap: 16px;
+  }
 }
 
 

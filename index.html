@@ -129,6 +129,15 @@
           </button>
         </div>
       </header>
+
+      <!-- Saldo Disponible en Pantalla Principal -->
+      <section class="home-balance-card card">
+        <div class="home-balance-info">
+          <span class="home-balance-label">Saldo Disponible</span>
+          <h2 id="home-saldo-amount" class="home-balance-val">$ 0.00</h2>
+        </div>
+      </section>
+
       <main class="view-content menu-grid">
         <button class="menu-card" data-target="view-add-movement">
           <div class="menu-icon icon-add">
@@ -404,27 +413,12 @@
             </div>
           </div>
           <div class="kpi-row">
-            <div class="kpi-card kpi-savings col-6">
+            <div class="kpi-card kpi-savings col-12">
               <span class="kpi-icon"><span class="material-symbols-rounded">savings</span></span>
               <div class="kpi-info">
-                <span class="kpi-label">Ahorro</span>
+                <span class="kpi-label">Ahorro del Mes</span>
                 <span class="kpi-value" id="kpi-ahorro">$ 0.00</span>
               </div>
-            </div>
-            <div class="kpi-card kpi-projected col-6" id="kpi-proyectado-card" style="cursor: pointer;">
-              <span class="kpi-icon"><span class="material-symbols-rounded">pending_actions</span></span>
-              <div class="kpi-info">
-                <span class="kpi-label">Proyectados</span>
-                <span class="kpi-value" id="kpi-proyectado">$ 0.00</span>
-                <small class="click-info">Gestionar ➔</small>
-              </div>
-            </div>
-          </div>
-          <div class="kpi-card kpi-final-projected" id="kpi-saldo-proyectado-card">
-            <span class="kpi-icon"><span class="material-symbols-rounded">calendar_today</span></span>
-            <div class="kpi-info">
-              <span class="kpi-label">Saldo Proyectado Fin de Mes</span>
-              <span class="kpi-value" id="kpi-saldo-proyectado">$ 0.00</span>
             </div>
           </div>
 
@@ -730,6 +724,39 @@
             </div>
             <small class="text-secondary">Si se deja vacío, la app calcula el promedio pagado en los últimos 3 meses.</small>
           </div>
+
+          <!-- Periodicidad y selección de meses -->
+          <div class="form-group">
+            <label>Periodicidad del compromiso</label>
+            <div class="segmented-control">
+              <input type="radio" id="rem-per-mensual" name="rem-periodicidad" value="mensual" checked>
+              <label for="rem-per-mensual">Todos los meses</label>
+              <input type="radio" id="rem-per-unico" name="rem-periodicidad" value="unico">
+              <label for="rem-per-unico">Evento único</label>
+              <input type="radio" id="rem-per-custom" name="rem-periodicidad" value="personalizado">
+              <label for="rem-per-custom">Meses específicos</label>
+            </div>
+          </div>
+
+          <!-- Grilla de 12 meses (solo visible si se eligen meses específicos) -->
+          <div id="rem-months-picker" class="form-group-card hidden">
+            <h4>Selecciona los meses en que aplica:</h4>
+            <div class="months-selector-grid">
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="1"> Ene</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="2"> Feb</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="3"> Mar</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="4"> Abr</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="5"> May</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="6"> Jun</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="7"> Jul</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="8"> Ago</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="9"> Sep</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="10"> Oct</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="11"> Nov</label>
+              <label class="month-chip"><input type="checkbox" name="rem-month" value="12"> Dic</label>
+            </div>
+          </div>
+
           <div class="form-row">
             <button type="button" class="btn btn-secondary col-6" id="btn-cancel-reminder">Cancelar</button>
             <button type="submit" class="btn btn-primary col-6" id="btn-save-reminder">Guardar</button>
