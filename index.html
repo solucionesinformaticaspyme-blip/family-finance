@@ -252,11 +252,11 @@
             <div class="form-row">
               <div class="form-group col-6">
                 <label for="mov-usd-cantidad">Cantidad USD</label>
-                <input type="number" id="mov-usd-cantidad" placeholder="0.00" step="0.01" min="0.01" inputmode="decimal">
+                <input type="text" id="mov-usd-cantidad" placeholder="0,00" inputmode="decimal" autocomplete="off">
               </div>
               <div class="form-group col-6">
                 <label for="mov-usd-tc">Tipo de Cambio</label>
-                <input type="number" id="mov-usd-tc" placeholder="0.00" step="0.1" min="0.1" inputmode="decimal">
+                <input type="text" id="mov-usd-tc" placeholder="0,00" inputmode="decimal" autocomplete="off">
               </div>
             </div>
           </div>
@@ -274,7 +274,7 @@
             <label for="mov-monto">Monto (Moneda Local)</label>
             <div class="monto-input-wrapper">
               <span class="monto-currency">$</span>
-              <input type="number" id="mov-monto" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+              <input type="text" id="mov-monto" placeholder="0,00" required inputmode="decimal" autocomplete="off">
             </div>
           </div>
 
@@ -720,7 +720,7 @@
             <label for="rem-monto">Monto Estimado Fijo (opcional)</label>
             <div class="monto-input-wrapper">
               <span class="monto-currency">$</span>
-              <input type="number" id="rem-monto" placeholder="Dejar vacío para usar prom. 3 meses" step="0.01" min="0" inputmode="decimal">
+              <input type="text" id="rem-monto" placeholder="Dejar vacío para usar prom. 3 meses" inputmode="decimal" autocomplete="off">
             </div>
             <small class="text-secondary">Si se deja vacío, la app calcula el promedio pagado en los últimos 3 meses.</small>
           </div>
@@ -818,7 +818,7 @@
             <label for="proj-monto">Monto Estimado</label>
             <div class="monto-input-wrapper">
               <span class="monto-currency">$</span>
-              <input type="number" id="proj-monto" placeholder="0.00" step="0.01" min="0.01" required inputmode="decimal">
+              <input type="text" id="proj-monto" placeholder="0,00" required inputmode="decimal" autocomplete="off">
             </div>
           </div>
           <div class="form-row">

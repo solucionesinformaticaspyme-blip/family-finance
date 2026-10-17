@@ -802,8 +802,8 @@ function toggleUsdFields(show) {
  * Calcula Monto ARS = Cantidad USD * Tipo Cambio.
  */
 function recalculateUsdTotal() {
-  const cant = parseFloat(document.getElementById("mov-usd-cantidad").value) || 0;
-  const tc = parseFloat(document.getElementById("mov-usd-tc").value) || 0;
+  const cant = Utils.parseNumber(document.getElementById("mov-usd-cantidad").value);
+  const tc = Utils.parseNumber(document.getElementById("mov-usd-tc").value);
   const total = cant * tc;
 
   document.getElementById("mov-monto").value = total > 0 ? total.toFixed(2) : "";
@@ -821,11 +821,11 @@ async function handleMovementSubmit(e) {
   const categoria = document.getElementById("mov-categoria").value;
   const subcategoria = document.getElementById("mov-subcategoria").value;
   const medioPago = document.getElementById("mov-medio-pago").value;
-  const monto = parseFloat(document.getElementById("mov-monto").value);
+  const monto = Utils.parseNumber(document.getElementById("mov-monto").value);
   const comentario = document.getElementById("mov-comentario").value.trim();
 
   // Validaciones
-  if (!fecha || !tipo || !categoria || !subcategoria || !medioPago || isNaN(monto) || monto <= 0) {
+  if (!fecha || !tipo || !categoria || !subcategoria || !medioPago || monto <= 0) {
     alert("Por favor completa todos los campos requeridos con valores válidos.");
     return;
   }
@@ -858,10 +858,10 @@ async function handleMovementSubmit(e) {
   const esUsd = selectedSub && (selectedSub.dataset.esUsd === "S" || selectedSub.dataset.esUsd === "SI");
 
   if (esUsd) {
-    const cant = parseFloat(document.getElementById("mov-usd-cantidad").value);
-    const tc = parseFloat(document.getElementById("mov-usd-tc").value);
+    const cant = Utils.parseNumber(document.getElementById("mov-usd-cantidad").value);
+    const tc = Utils.parseNumber(document.getElementById("mov-usd-tc").value);
 
-    if (isNaN(cant) || cant <= 0 || isNaN(tc) || tc <= 0) {
+    if (cant <= 0 || tc <= 0) {
       alert("Para compra de USD debes ingresar cantidad y tipo de cambio válidos.");
       if (submitBtn) {
         submitBtn.disabled = false;
@@ -1012,7 +1012,7 @@ function renderSearchList(items) {
     
     // Detalle USD si es especial
     const usdHtml = item.CANTIDAD_USD 
-      ? `<div class="text-secondary small font-weight-500">Compra: $${parseFloat(item.CANTIDAD_USD).toFixed(2)} USD a TC $${parseFloat(item.TIPO_CAMBIO).toFixed(2)}</div>` 
+      ? `<div class="text-secondary small font-weight-500">Compra: $${Utils.parseNumber(item.CANTIDAD_USD).toFixed(2)} USD a TC $${Utils.parseNumber(item.TIPO_CAMBIO).toFixed(2)}</div>` 
       : "";
 
     card.innerHTML = `
@@ -1108,7 +1108,7 @@ function loadMovementToEdit(item) {
   document.getElementById("mov-id").value = item.ID;
   document.getElementById("mov-fecha").value = Utils.formatDateInput(item.FECHA);
   document.getElementById("mov-comentario").value = item.COMENTARIO || "";
-  document.getElementById("mov-monto").value = parseFloat(item.MONTO).toFixed(2);
+  document.getElementById("mov-monto").value = Utils.parseNumber(item.MONTO).toFixed(2);
 
   // Configurar Tipo de movimiento (Radio Buttons)
   const radio = document.querySelector(`input[name="mov-tipo"][value="${item.TIPO}"]`);
@@ -1132,9 +1132,9 @@ function loadMovementToEdit(item) {
   // Si es compra USD, llenar campos adicionales
   if (item.CANTIDAD_USD) {
     toggleUsdFields(true);
-    document.getElementById("mov-usd-cantidad").value = parseFloat(item.CANTIDAD_USD).toFixed(2);
-    document.getElementById("mov-usd-tc").value = parseFloat(item.TIPO_CAMBIO).toFixed(2);
-    document.getElementById("mov-monto").value = parseFloat(item.MONTO).toFixed(2);
+    document.getElementById("mov-usd-cantidad").value = Utils.parseNumber(item.CANTIDAD_USD).toFixed(2);
+    document.getElementById("mov-usd-tc").value = Utils.parseNumber(item.TIPO_CAMBIO).toFixed(2);
+    document.getElementById("mov-monto").value = Utils.parseNumber(item.MONTO).toFixed(2);
   } else {
     toggleUsdFields(false);
   }
@@ -1845,8 +1845,8 @@ function renderSavingsRateChart(monthlyData) {
   // Calcular tasa de ahorro para cada mes: (ingresos - gastos) / ingresos * 100
   const labels = monthlyData.map(m => m.mes);
   const rates = monthlyData.map(m => {
-    const ing = parseFloat(m.ingresos) || 0;
-    const gas = parseFloat(m.gastos) || 0;
+    const ing = Utils.parseNumber(m.ingresos);
+    const gas = Utils.parseNumber(m.gastos);
     if (ing <= 0) return 0;
     const tasa = ((ing - gas) / ing) * 100;
     return Math.round(tasa * 10) / 10;
@@ -2823,7 +2823,7 @@ function renderRemindersList(items) {
   items.forEach(item => {
     // Calcular suma pendiente (solo lo no pagado: overdue o pending)
     if (item.estadoCalculado !== "paid") {
-      totalPendiente += parseFloat(item.montoEstimado) || 0;
+      totalPendiente += Utils.parseNumber(item.montoEstimado);
     }
 
     const card = document.createElement("div");
@@ -2942,7 +2942,7 @@ async function handleSaveReminder(e) {
       subcategoria: sub,
       comentario: com,
       concepto: com,
-      montoEstimado: montoInput ? parseFloat(montoInput) : 0,
+      montoEstimado: montoInput ? Utils.parseNumber(montoInput) : 0,
       periodicidad: periodicidad,
       meses: meses
     };
@@ -3114,7 +3114,7 @@ function renderProjectionsList(items) {
       document.getElementById("proj-id").value = item.ID;
       document.getElementById("proj-fecha").value = item.FECHA ? item.FECHA.toString().substring(0, 10) : "";
       document.getElementById("proj-concepto").value = item.CONCEPTO;
-      document.getElementById("proj-monto").value = parseFloat(item.MONTO).toFixed(2);
+      document.getElementById("proj-monto").value = Utils.parseNumber(item.MONTO).toFixed(2);
       document.getElementById("projection-form-title").innerText = "Editar Gasto Proyectado";
       document.getElementById("btn-save-projection").innerText = "Actualizar";
       card.closest(".view-content") && card.closest(".view-content").scrollTo(0, 0);
@@ -3155,9 +3155,9 @@ async function handleSaveProjection(e) {
   const id = document.getElementById("proj-id").value;
   const fecha = document.getElementById("proj-fecha").value;
   const concepto = document.getElementById("proj-concepto").value.trim();
-  const monto = parseFloat(document.getElementById("proj-monto").value);
+  const monto = Utils.parseNumber(document.getElementById("proj-monto").value);
 
-  if (!fecha || !concepto || isNaN(monto) || monto <= 0) {
+  if (!fecha || !concepto || monto <= 0) {
     alert("Completa todos los campos con valores válidos.");
     return;
   }
@@ -3289,7 +3289,7 @@ async function handlePayProjection(e) {
     // Para poder enviar el monto correcto, lo buscamos en la lista renderizada
     const payBtn = document.querySelector(`.btn-proj-pay[data-id="${id}"]`);
     if (payBtn && payBtn.dataset.monto) {
-      payload.movement.monto = parseFloat(payBtn.dataset.monto);
+      payload.movement.monto = Utils.parseNumber(payBtn.dataset.monto);
     }
   }
 
@@ -3353,11 +3353,48 @@ const Utils = {
     return date.toLocaleDateString("es-AR", { day: "numeric", month: "short", year: "numeric" });
   },
 
+  parseNumber: function(val) {
+    if (val === null || val === undefined || val === "") return 0;
+    if (typeof val === "number") return isNaN(val) ? 0 : val;
+
+    let s = String(val).trim();
+    s = s.replace(/[^0-9.,+-]/g, "");
+    if (!s) return 0;
+
+    const hasDot = s.includes(".");
+    const hasComma = s.includes(",");
+
+    if (hasDot && hasComma) {
+      if (s.lastIndexOf(",") > s.lastIndexOf(".")) {
+        // Formato AR/ES: "1.250,50" -> quitar puntos y coma a punto
+        s = s.replace(/\./g, "").replace(",", ".");
+      } else {
+        // Formato US/EN: "1,250.50" -> quitar comas
+        s = s.replace(/,/g, "");
+      }
+    } else if (hasComma) {
+      const commaParts = s.split(",");
+      if (commaParts.length > 2) {
+        s = s.replace(/,/g, "");
+      } else {
+        s = s.replace(",", ".");
+      }
+    } else if (hasDot) {
+      const dotParts = s.split(".");
+      if (dotParts.length > 2) {
+        s = s.replace(/\./g, "");
+      }
+    }
+
+    const num = parseFloat(s);
+    return isNaN(num) ? 0 : num;
+  },
+
   formatCurrency: function(monto) {
     if (state.privacyMode) {
       return "••••••";
     }
-    const val = parseFloat(monto) || 0;
+    const val = this.parseNumber(monto);
     return new Intl.NumberFormat("es-AR", {
       style: "currency",
       currency: "ARS",
@@ -3369,7 +3406,7 @@ const Utils = {
     if (state.privacyMode) {
       return "••••••";
     }
-    const val = parseFloat(monto) || 0;
+    const val = this.parseNumber(monto);
     const absVal = Math.abs(val);
     const sign = val < 0 ? "-" : "";
     if (absVal >= 1000000) {
