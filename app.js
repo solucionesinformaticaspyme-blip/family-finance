@@ -85,7 +85,7 @@ const state = {
   currentSaldoApp: 0,
   ultimoArqueo: null,
   notificationEmails: [],
-  geminiApiKey: "",
+  geminiApiKey: getStoredItem("finance_gemini_api_key") || "",
 
   charts: {
     categories: null,
@@ -288,6 +288,11 @@ async function bootApp() {
         if (cachedUser) {
           try { state.user = JSON.parse(cachedUser); } catch(e) {}
         }
+      }
+
+      if (response.data.geminiApiKey) {
+        state.geminiApiKey = response.data.geminiApiKey;
+        setStoredItem("finance_gemini_api_key", response.data.geminiApiKey);
       }
 
       // Inicializar etiquetas del dashboard/menú
@@ -2527,6 +2532,7 @@ async function handleConfigGeminiSubmit(e) {
     });
     if (res.success) {
       state.geminiApiKey = key;
+      setStoredItem("finance_gemini_api_key", key);
       alert("Clave de Gemini guardada correctamente.");
     } else {
       alert("Error al guardar clave: " + res.message);
@@ -2792,21 +2798,27 @@ async function handleReceiptFileChange(e) {
     if (statusText) statusText.innerText = "Subiendo a Drive...";
     if (suggestedBadge) suggestedBadge.classList.add("hidden");
 
+    const currentApiKey = state.geminiApiKey || getStoredItem("finance_gemini_api_key") || "";
+
     const response = await apiRequest("uploadReceipt", {
       base64Data: compressed.base64Data,
       mimeType: compressed.mimeType,
-      fileName: file.name || "ticket.jpg"
+      fileName: file.name || "ticket.jpg",
+      apiKey: currentApiKey
     });
 
     if (response.success && response.data) {
-      if (statusText) statusText.innerText = "Comprobante adjuntado";
       const urlInput = document.getElementById("mov-comprobante-url");
       if (urlInput) urlInput.value = response.data.fileUrl || "";
 
       // Si Gemini extrajo datos, autocompletar campos sugeridos en el formulario
       if (response.data.extracted) {
+        if (statusText) statusText.innerText = "Ticket analizado con éxito";
         const ext = response.data.extracted;
-        if (suggestedBadge) suggestedBadge.classList.remove("hidden");
+        if (suggestedBadge) {
+          suggestedBadge.innerText = "✨ Datos sugeridos con IA";
+          suggestedBadge.classList.remove("hidden");
+        }
 
         if (ext.monto && !isNaN(Number(ext.monto))) {
           const montoInput = document.getElementById("mov-monto");
@@ -2846,6 +2858,14 @@ async function handleReceiptFileChange(e) {
               break;
             }
           }
+        }
+      } else {
+        var errorMsg = response.data.aiError || "";
+        if (errorMsg) {
+          if (statusText) statusText.innerText = "Comprobante adjuntado (" + errorMsg + ")";
+          alert("Aviso de IA: " + errorMsg + "\nPuedes cargar los datos manualmente.");
+        } else {
+          if (statusText) statusText.innerText = "Comprobante guardado en Drive";
         }
       }
     } else {
