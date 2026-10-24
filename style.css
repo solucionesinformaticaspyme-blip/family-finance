@@ -1543,9 +1543,12 @@ select:disabled {
 
 .pivot-table-wrapper {
   overflow-x: auto;
+  overflow-y: auto;
+  max-height: 72vh;
   -webkit-overflow-scrolling: touch;
   margin: 0 -16px;
   padding: 0 16px;
+  position: relative;
 }
 
 .pivot-table {
@@ -1564,18 +1567,25 @@ select:disabled {
   white-space: nowrap;
 }
 
-.pivot-table th {
-  background-color: #f8fafc;
+/* Fila de encabezados de mes Sticky hacia arriba al scrolear verticalmente */
+.pivot-table thead th {
+  position: -webkit-sticky;
+  position: sticky;
+  top: 0;
+  z-index: 15;
+  background-color: #F8FAFC !important;
+  background-clip: padding-box;
   font-size: 11px;
   text-transform: uppercase;
   letter-spacing: 0.5px;
   color: var(--text-secondary);
   font-weight: 700;
-  border-bottom: 2px solid #e2e8f0;
+  border-top: 1px solid #CBD5E1;
+  border-bottom: 2px solid #CBD5E1 !important;
+  box-shadow: 0 3px 6px rgba(0, 0, 0, 0.06);
 }
 
 /* Primera columna Sticky para navegación perfecta en iPhone y Desktop */
-.pivot-table th:first-child,
 .pivot-table td:first-child {
   position: -webkit-sticky;
   position: sticky;
@@ -1584,15 +1594,24 @@ select:disabled {
   text-align: left;
   max-width: 210px;
   min-width: 165px;
-  background-color: #FFFFFF;
+  background-color: #FFFFFF !important;
   background-clip: padding-box;
   border-right: 2px solid #CBD5E1 !important;
   box-shadow: 4px 0 10px rgba(0, 0, 0, 0.08);
 }
 
-.pivot-table th:first-child {
+/* Celda superior izquierda (esquina fija en ambos ejes al mismo tiempo) */
+.pivot-table thead th:first-child {
+  position: -webkit-sticky;
+  position: sticky;
+  left: 0;
+  top: 0;
+  z-index: 30; /* El más alto de toda la tabla para que nada pase por detrás */
   background-color: #F8FAFC !important;
-  z-index: 15;
+  background-clip: padding-box;
+  border-right: 2px solid #CBD5E1 !important;
+  border-bottom: 2px solid #CBD5E1 !important;
+  box-shadow: 4px 3px 8px rgba(0, 0, 0, 0.08);
 }
 
 /* Filas de Secciones (Ingresos / Gastos) */
@@ -2354,6 +2373,225 @@ select:disabled {
   padding: 2px;
   display: flex;
   align-items: center;
+}
+
+/* ==========================================================================
+   VISTA: ANÁLISIS FINANCIERO E INSIGHTS
+   ========================================================================== */
+
+.analysis-hero-card {
+  background: linear-gradient(135deg, #1e293b 0%, #0f172a 100%);
+  border-radius: var(--radius-lg);
+  padding: 18px;
+  color: #ffffff;
+  display: flex;
+  gap: 14px;
+  align-items: flex-start;
+  margin-bottom: 16px;
+  box-shadow: 0 4px 14px rgba(15, 23, 42, 0.15);
+}
+
+.analysis-hero-icon {
+  background: rgba(99, 102, 241, 0.2);
+  color: #818cf8;
+  border: 1px solid rgba(129, 140, 248, 0.3);
+  width: 44px;
+  height: 44px;
+  border-radius: 12px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-shrink: 0;
+}
+
+.analysis-hero-icon .material-symbols-rounded {
+  font-size: 26px;
+}
+
+.analysis-hero-body {
+  flex: 1;
+}
+
+.analysis-hero-title {
+  font-size: 15px;
+  font-weight: 700;
+  display: block;
+  margin-bottom: 4px;
+  color: #f8fafc;
+}
+
+.analysis-hero-desc {
+  font-size: 11.5px;
+  color: #94a3b8;
+  line-height: 1.4;
+  margin: 0 0 12px 0;
+}
+
+.analysis-hero-stats {
+  display: flex;
+  gap: 10px;
+}
+
+.analysis-stat-pill {
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.12);
+  border-radius: 8px;
+  padding: 6px 12px;
+  display: flex;
+  flex-direction: column;
+}
+
+.analysis-stat-pill .stat-num {
+  font-size: 14px;
+  font-weight: 800;
+  color: #38bdf8;
+}
+
+.analysis-stat-pill .stat-label {
+  font-size: 10px;
+  color: #94a3b8;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+}
+
+/* Tarjetas de Conclusiones */
+.analysis-cards-list {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+}
+
+.insight-card {
+  background: var(--bg-card);
+  border-radius: var(--radius-md);
+  border: 1px solid var(--border-color);
+  border-left-width: 4px;
+  padding: 16px;
+  box-shadow: var(--shadow-sm);
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  transition: transform 0.15s ease, box-shadow 0.15s ease;
+}
+
+/* Variaciones por nivel de severidad */
+.insight-card.level-danger {
+  border-left-color: #ef4444;
+}
+.insight-card.level-warning {
+  border-left-color: #f59e0b;
+}
+.insight-card.level-success {
+  border-left-color: #10b981;
+}
+.insight-card.level-info {
+  border-left-color: #3b82f6;
+}
+.insight-card.level-neutral {
+  border-left-color: #6366f1;
+}
+
+.insight-header-row {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+
+.insight-badge {
+  font-size: 11px;
+  font-weight: 700;
+  text-transform: uppercase;
+  letter-spacing: 0.5px;
+  padding: 3px 8px;
+  border-radius: 6px;
+}
+
+.insight-card.level-danger .insight-badge {
+  background: #fef2f2;
+  color: #dc2626;
+}
+.insight-card.level-warning .insight-badge {
+  background: #fffbeb;
+  color: #d97706;
+}
+.insight-card.level-success .insight-badge {
+  background: #ecfdf5;
+  color: #059669;
+}
+.insight-card.level-info .insight-badge {
+  background: #eff6ff;
+  color: #2563eb;
+}
+.insight-card.level-neutral .insight-badge {
+  background: #eef2ff;
+  color: #4f46e5;
+}
+
+.insight-metric-tag {
+  font-size: 12px;
+  font-weight: 800;
+  color: var(--text-primary);
+  background: var(--bg-input);
+  padding: 3px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border-color);
+}
+
+.insight-title {
+  font-size: 14.5px;
+  font-weight: 700;
+  color: var(--text-primary);
+  margin: 0;
+  line-height: 1.3;
+}
+
+.insight-desc {
+  font-size: 13px;
+  color: var(--text-secondary);
+  line-height: 1.5;
+  margin: 0;
+}
+
+.insight-tip-box {
+  background: var(--bg-input);
+  border: 1px solid var(--border-color);
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: flex;
+  gap: 8px;
+  align-items: flex-start;
+  margin-top: 4px;
+}
+
+.insight-tip-icon {
+  color: #f59e0b;
+  font-size: 18px;
+  flex-shrink: 0;
+  margin-top: 1px;
+}
+
+.insight-tip-text {
+  font-size: 12px;
+  color: var(--text-primary);
+  line-height: 1.4;
+  margin: 0;
+}
+
+.insight-impact-rank {
+  font-size: 11px;
+  color: var(--text-secondary);
+  font-weight: 600;
+  display: flex;
+  align-items: center;
+  gap: 4px;
+}
+
+/* Icono menú análisis */
+.icon-analysis {
+  background: #eef2ff;
+  color: #6366f1;
 }
 
 

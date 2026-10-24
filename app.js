@@ -74,6 +74,8 @@ const state = {
   // Caché SWR e interactividad del Dashboard
   cachedDashboardData: null,
   dashboardNeedsRefresh: true,  // Se marca true cuando se guarda/edita/paga un movimiento
+  cachedAnalysisData: null,
+  analysisNeedsRefresh: true,   // Se marca true para refrescar conclusiones
   selectedDonutPeriod: null,    // Período seleccionado para el gráfico de dona
   pivotExpandedCategories: {},  // Categorías de la tabla pivot actualmente desplegadas
   pivotExpandAll: false,        // Estado de expandir/colapsar todas
@@ -445,6 +447,8 @@ function showView(viewId) {
     } else if (viewId === "view-reminders") {
       resetReminderForm();
       loadRemindersView();
+    } else if (viewId === "view-analysis") {
+      loadAnalysisView();
     }
   }
 }
@@ -923,6 +927,7 @@ async function handleMovementSubmit(e) {
     if (response.success) {
       // Invalidar caché del dashboard para forzar recálculo fiel con el nuevo dato
       state.dashboardNeedsRefresh = true;
+      state.analysisNeedsRefresh = true;
 
       // Configurar vista de éxito
       document.getElementById("success-title").innerText = id ? "Movimiento Actualizado" : "Movimiento Registrado";
@@ -1105,6 +1110,7 @@ async function handleDeleteMovement(id, detalle = "") {
       // Invalidar cachés
       state.cachedDashboardData = null;
       state.dashboardNeedsRefresh = true;
+      state.analysisNeedsRefresh = true;
 
       // Si estamos en la vista de búsqueda, refrescar lista
       const searchView = document.getElementById("view-search");
@@ -2152,6 +2158,107 @@ function renderDashboardRecentList(items) {
     card.querySelector(".btn-delete-tx").addEventListener("click", () => {
       handleDeleteMovement(item.ID, `${item.CATEGORIA} - ${item.SUBCATEGORIA} (${amountSign}${formattedAmount})`);
     });
+
+    container.appendChild(card);
+  });
+}
+
+// ==========================================================================
+// VISTA: ANÁLISIS FINANCIERO E INSIGHTS INTELIGENTES
+// ==========================================================================
+
+/**
+ * Carga los datos consolidados de análisis financiero e insights.
+ * @param {boolean} [force=false] - Forzar actualización desde el servidor.
+ */
+async function loadAnalysisView(force = false) {
+  if (!force && state.cachedAnalysisData && !state.analysisNeedsRefresh) {
+    try {
+      renderAnalysisInsights(state.cachedAnalysisData);
+    } catch (e) {
+      console.error("Error al renderizar análisis desde caché:", e);
+    }
+    return;
+  }
+
+  showLoader("Generando análisis y conclusiones...");
+  try {
+    const response = await apiRequest("getFinancialInsights");
+    if (response && response.success && response.data) {
+      state.cachedAnalysisData = response.data;
+      state.analysisNeedsRefresh = false;
+      renderAnalysisInsights(response.data);
+    } else {
+      if (state.cachedAnalysisData) {
+        renderAnalysisInsights(state.cachedAnalysisData);
+      } else {
+        alert("Error al obtener análisis: " + (response && response.message ? response.message : "Sin respuesta"));
+      }
+    }
+  } catch (err) {
+    console.error("Error al cargar análisis:", err);
+    if (state.cachedAnalysisData) {
+      renderAnalysisInsights(state.cachedAnalysisData);
+    } else {
+      alert("Error de conexión al cargar el análisis financiero.");
+    }
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Renderiza las tarjetas de conclusiones ordenadas por impacto financiero.
+ * @param {Object} data - Objeto con { insights, summary }.
+ */
+function renderAnalysisInsights(data) {
+  const container = document.getElementById("analysis-insights-container");
+  if (!container) return;
+  container.innerHTML = "";
+
+  const statCount = document.getElementById("stat-analysis-count");
+  const statMax = document.getElementById("stat-analysis-max-impact");
+
+  const insights = (data && data.insights) ? data.insights : [];
+  const summary = (data && data.summary) ? data.summary : { totalInsights: 0, maxImpact: 0 };
+
+  if (statCount) statCount.innerText = summary.totalInsights !== undefined ? summary.totalInsights : insights.length;
+  if (statMax) statMax.innerText = Utils.formatCurrency(summary.maxImpact || 0);
+
+  if (insights.length === 0) {
+    container.innerHTML = `
+      <div class="card text-center p-4" style="background: var(--bg-card); border-radius: var(--radius-md);">
+        <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-secondary); opacity: 0.6;">check_circle</span>
+        <h4 class="mt-2" style="color: var(--text-primary); font-size: 15px;">Sin desvíos extraordinarios detectados</h4>
+        <p class="text-secondary small mt-1">Tus gastos se mantienen estables dentro de sus rangos normales o aún se requiere mayor historial para modelar patrones estacionales.</p>
+      </div>
+    `;
+    return;
+  }
+
+  insights.forEach((item, idx) => {
+    const card = document.createElement("div");
+    card.className = `insight-card level-${item.level || "info"}`;
+
+    const tipHtml = item.actionTip ? `
+      <div class="insight-tip-box">
+        <span class="material-symbols-rounded insight-tip-icon">lightbulb</span>
+        <p class="insight-tip-text"><b>Sugerencia:</b> ${item.actionTip}</p>
+      </div>
+    ` : "";
+
+    card.innerHTML = `
+      <div class="insight-header-row">
+        <span class="insight-badge">${item.badge || "Análisis"}</span>
+        <div style="display: flex; align-items: center; gap: 8px;">
+          <span class="insight-impact-rank">#${idx + 1} en impacto</span>
+          <span class="insight-metric-tag">${item.metric || ""}</span>
+        </div>
+      </div>
+      <h4 class="insight-title">${item.title}</h4>
+      <p class="insight-desc">${item.description}</p>
+      ${tipHtml}
+    `;
 
     container.appendChild(card);
   });
@@ -3303,6 +3410,21 @@ function initEventListeners() {
   const btnRemoveReceipt = document.getElementById("btn-remove-receipt");
   if (btnRemoveReceipt) {
     btnRemoveReceipt.addEventListener("click", handleRemoveReceipt);
+  }
+
+  // Navegación y refresco de Análisis Financiero
+  const btnDashToAnalysis = document.getElementById("btn-dash-to-analysis");
+  if (btnDashToAnalysis) {
+    btnDashToAnalysis.addEventListener("click", () => {
+      showView("view-analysis");
+    });
+  }
+
+  const btnRefreshAnalysis = document.getElementById("btn-refresh-analysis");
+  if (btnRefreshAnalysis) {
+    btnRefreshAnalysis.addEventListener("click", () => {
+      loadAnalysisView(true);
+    });
   }
 }
 

@@ -170,7 +170,7 @@
             <span class="material-symbols-rounded">checklist</span>
           </div>
           <div class="menu-info">
-            <h3>Pendientes y Recordatorios</h3>
+            <h3>Recordatorios de Pago</h3>
             <p>Controla tus pagos fijos y compromisos del mes.</p>
           </div>
           <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
@@ -183,6 +183,17 @@
           <div class="menu-info">
             <h3>Dashboard</h3>
             <p>Visualiza tus saldos y gráficos mensuales.</p>
+          </div>
+          <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
+        </button>
+
+        <button class="menu-card" data-target="view-analysis">
+          <div class="menu-icon icon-analysis">
+            <span class="material-symbols-rounded">insights</span>
+          </div>
+          <div class="menu-info">
+            <h3>Análisis</h3>
+            <p>Conclusiones y patrones de impacto financiero.</p>
           </div>
           <span class="material-symbols-rounded chevron-arrow">chevron_right</span>
         </button>
@@ -401,6 +412,9 @@
           <p id="dashboard-current-month-badge" class="subtitle-small" style="margin: 2px 0 0; color: var(--text-secondary); font-size: 11px;">Mes en curso (los movimientos se imputan según su fecha real)</p>
         </div>
         <div style="display: flex; align-items: center; gap: 4px;">
+          <button type="button" id="btn-dash-to-analysis" class="btn-icon" title="Ver Análisis Financiero" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
+            <span class="material-symbols-rounded">insights</span>
+          </button>
           <button type="button" id="btn-open-arqueo" class="btn-icon" title="Arqueo vs Dinero Real" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
             <span class="material-symbols-rounded">account_balance_wallet</span>
           </button>
@@ -548,6 +562,52 @@
             <!-- Cargados por JS -->
           </div>
         </section>
+      </main>
+    </div>
+
+    <!-- 7.5 ANÁLISIS FINANCIERO E INSIGHTS -->
+    <div id="view-analysis" class="view">
+      <header class="app-header navigation-header">
+        <button class="btn-back">
+          <span class="material-symbols-rounded">arrow_back</span>
+        </button>
+        <div style="flex: 1;">
+          <h1 style="margin: 0; line-height: 1.2;">Análisis Financiero</h1>
+          <p class="subtitle-small" style="margin: 2px 0 0; color: var(--text-secondary); font-size: 11px;">Conclusiones ordenadas de mayor a menor impacto</p>
+        </div>
+        <div class="header-actions">
+          <button type="button" id="btn-refresh-analysis" class="btn-icon" title="Actualizar análisis">
+            <span class="material-symbols-rounded">refresh</span>
+          </button>
+        </div>
+      </header>
+
+      <main class="view-content">
+        <!-- Banner Resumen de Métricas de Análisis -->
+        <div class="analysis-hero-card">
+          <div class="analysis-hero-icon">
+            <span class="material-symbols-rounded">insights</span>
+          </div>
+          <div class="analysis-hero-body">
+            <span class="analysis-hero-title">Diagnóstico Inteligente</span>
+            <p class="analysis-hero-desc">Patrones, estacionalidad y desvíos detectados automáticamente en tus movimientos.</p>
+            <div class="analysis-hero-stats">
+              <div class="analysis-stat-pill">
+                <span class="stat-num" id="stat-analysis-count">0</span>
+                <span class="stat-label">Conclusiones</span>
+              </div>
+              <div class="analysis-stat-pill">
+                <span class="stat-num" id="stat-analysis-max-impact">$ 0</span>
+                <span class="stat-label">Mayor Impacto</span>
+              </div>
+            </div>
+          </div>
+        </div>
+
+        <!-- Contenedor dinámico de Conclusiones ordenadas -->
+        <div id="analysis-insights-container" class="analysis-cards-list mt-3">
+          <!-- Inyectado por JS -->
+        </div>
       </main>
     </div>
 
@@ -768,7 +828,7 @@
         <button class="btn-back">
           <span class="material-symbols-rounded">arrow_back</span>
         </button>
-        <h1>Pendientes y Recordatorios</h1>
+        <h1>Recordatorios de Pago</h1>
         <div class="header-actions">
           <button type="button" id="btn-toggle-new-reminder" class="btn-icon" title="Nuevo Recordatorio">
             <span class="material-symbols-rounded">add</span>
