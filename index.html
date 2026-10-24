@@ -136,6 +136,10 @@
           <span class="home-balance-label">Saldo Disponible</span>
           <h2 id="home-saldo-amount" class="home-balance-val">$ 0.00</h2>
         </div>
+        <div class="home-last-activity-tag">
+          <span class="material-symbols-rounded">schedule</span>
+          <span>Última carga: <strong id="home-last-activity">--</strong></span>
+        </div>
       </section>
 
       <main class="view-content menu-grid">
@@ -208,6 +212,26 @@
         <form id="form-movement" class="form-container">
           <!-- ID oculto para edición -->
           <input type="hidden" id="mov-id">
+          <input type="hidden" id="mov-comprobante-url">
+
+          <!-- Escaneo inteligente de ticket / comprobante (Opcional) -->
+          <div class="receipt-scanner-card">
+            <input type="file" id="mov-receipt-file" accept="image/*" class="hidden">
+            <button type="button" id="btn-scan-receipt" class="btn btn-secondary btn-block btn-scan-receipt">
+              <span class="material-symbols-rounded">photo_camera</span>
+              <span>Escanear ticket o adjuntar foto</span>
+            </button>
+            <div id="receipt-preview-container" class="receipt-preview-box hidden">
+              <img id="receipt-preview-img" src="" alt="Comprobante" class="receipt-thumbnail">
+              <div class="receipt-preview-details">
+                <span id="receipt-status-text" class="receipt-status">Comprobante adjuntado</span>
+                <span id="receipt-suggested-badge" class="receipt-badge hidden">✨ Datos sugeridos con IA</span>
+              </div>
+              <button type="button" id="btn-remove-receipt" class="btn-icon btn-remove-receipt" title="Quitar comprobante">
+                <span class="material-symbols-rounded">close</span>
+              </button>
+            </div>
+          </div>
 
           <!-- 1. Fecha -->
           <div class="form-group">
@@ -377,6 +401,9 @@
           <p id="dashboard-current-month-badge" class="subtitle-small" style="margin: 2px 0 0; color: var(--text-secondary); font-size: 11px;">Mes en curso (los movimientos se imputan según su fecha real)</p>
         </div>
         <div style="display: flex; align-items: center; gap: 4px;">
+          <button type="button" id="btn-open-arqueo" class="btn-icon" title="Arqueo vs Dinero Real" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
+            <span class="material-symbols-rounded">account_balance_wallet</span>
+          </button>
           <button type="button" id="btn-toggle-privacy-dash" class="btn-icon btn-privacy-toggle" title="Ocultar / Mostrar montos" style="background: transparent; border: none; color: var(--text-primary); cursor: pointer; padding: 6px; display: flex; align-items: center; border-radius: 50%;">
             <span class="material-symbols-rounded" id="icon-privacy-dash">visibility</span>
           </button>
@@ -538,6 +565,7 @@
         <button class="config-tab-btn active" data-tab="tab-config-security">Seguridad</button>
         <button class="config-tab-btn" data-tab="tab-config-users">Usuarios</button>
         <button class="config-tab-btn" data-tab="tab-config-catalogues">Catálogos</button>
+        <button class="config-tab-btn" data-tab="tab-config-notifications">Notificaciones e IA</button>
       </nav>
 
       <main class="view-content config-tab-container">
@@ -664,6 +692,71 @@
             <div class="catalog-list" id="list-cfg-mp"></div>
           </div>
 
+          <!-- Gestión Cuentas de Arqueo -->
+          <div class="card">
+            <h3>Cuentas para Arqueo Real</h3>
+            <p class="text-secondary small">Cuentas bancarias, billeteras o efectivo que participan del arqueo.</p>
+            <form id="form-config-cuentas-arqueo" class="form-container">
+              <input type="hidden" id="cfg-cta-id">
+              <div class="form-group">
+                <label for="cfg-cta-nombre">Nombre de la Cuenta</label>
+                <input type="text" id="cfg-cta-nombre" required placeholder="Ej: Banco Mauro, MP Laura, Efectivo">
+              </div>
+              <div class="form-group">
+                <label for="cfg-cta-estado">Estado</label>
+                <select id="cfg-cta-estado" required>
+                  <option value="Activo">Activo</option>
+                  <option value="Inactivo">Inactivo</option>
+                </select>
+              </div>
+              <button type="submit" class="btn btn-success btn-block">Guardar Cuenta de Arqueo</button>
+            </form>
+            <div class="catalog-list" id="list-cfg-cuentas-arqueo"></div>
+          </div>
+
+        </section>
+
+        <!-- Tab Notificaciones e IA -->
+        <section id="tab-config-notifications" class="config-tab-content">
+          <!-- Correos de Notificaciones -->
+          <div class="card">
+            <h3>Notificaciones Automáticas por Email</h3>
+            <p class="text-secondary small">Recibe el resumen semanal todos los domingos a las 20:00 hs y el cierre a fin de mes.</p>
+            
+            <form id="form-config-email-add" class="form-container">
+              <div class="form-group">
+                <label for="cfg-new-email">Agregar Dirección de Email</label>
+                <div style="display: flex; gap: 8px;">
+                  <input type="email" id="cfg-new-email" placeholder="ejemplo@gmail.com" style="flex: 1;">
+                  <button type="submit" class="btn btn-primary" style="white-space: nowrap;">+ Agregar</button>
+                </div>
+              </div>
+            </form>
+
+            <div class="email-recipients-list" id="list-cfg-emails">
+              <!-- Lista de emails con botón de eliminar -->
+            </div>
+
+            <button type="button" id="btn-test-email" class="btn btn-secondary btn-block mt-3" style="display: flex; align-items: center; justify-content: center; gap: 8px;">
+              <span class="material-symbols-rounded">mail</span>
+              <span>Enviar Correo de Prueba Ahora</span>
+            </button>
+          </div>
+
+          <!-- Google Gemini API Key -->
+          <div class="card">
+            <h3>Lectura Inteligente de Tickets (Google Gemini)</h3>
+            <p class="text-secondary small">Permite autocompletar montos, fechas y conceptos al escanear tickets o comprobantes con la cámara.</p>
+            
+            <form id="form-config-gemini" class="form-container">
+              <div class="form-group">
+                <label for="cfg-gemini-key">Gemini API Key (Gratuita)</label>
+                <input type="password" id="cfg-gemini-key" placeholder="AIzaSy..." autocomplete="off">
+                <small class="text-secondary">Obtén tu clave gratuita en <a href="https://aistudio.google.com/app/apikey" target="_blank" rel="noopener" style="color: var(--primary-color); text-decoration: underline;">Google AI Studio</a>.</small>
+              </div>
+              <button type="submit" class="btn btn-success btn-block">Guardar Clave Gemini</button>
+            </form>
+          </div>
         </section>
 
       </main>
@@ -880,6 +973,50 @@
           <div class="form-row">
             <button type="button" class="btn btn-secondary col-6" id="btn-modal-pay-cancel">Cancelar</button>
             <button type="submit" class="btn btn-success col-6">Confirmar</button>
+          </div>
+        </form>
+      </div>
+    </div>
+
+    <!-- MODAL DE ARQUEO DE DINERO REAL -->
+    <div id="modal-arqueo" class="modal-overlay hidden">
+      <div class="modal-content card modal-arqueo-content">
+        <div class="modal-header-row">
+          <div>
+            <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">Arqueo vs Dinero Real</h3>
+            <span class="arqueo-last-date" id="arqueo-last-date-badge">Último arqueo: Nunca</span>
+          </div>
+          <button type="button" class="btn-icon" id="btn-close-arqueo" title="Cerrar">
+            <span class="material-symbols-rounded">close</span>
+          </button>
+        </div>
+        <p class="text-secondary small" style="margin-top: 4px; margin-bottom: 12px;">Ingresa el saldo real disponible en cada cuenta o bolsillo:</p>
+        
+        <form id="form-arqueo" class="form-container">
+          <!-- Cuentas dinámicas inyectadas por JS -->
+          <div id="arqueo-accounts-container" class="arqueo-accounts-grid">
+            <!-- Renderizado dinámico -->
+          </div>
+
+          <!-- Resumen de Totales y Diferencias -->
+          <div class="arqueo-summary-box">
+            <div class="arqueo-summary-row highlight">
+              <span>Total arqueo real:</span>
+              <strong id="arqueo-total-real">$ 0,00</strong>
+            </div>
+            <div class="arqueo-summary-row">
+              <span>Saldo en la app:</span>
+              <span id="arqueo-saldo-app">$ 0,00</span>
+            </div>
+            <div class="arqueo-summary-row diff-row">
+              <span>Diferencia:</span>
+              <strong id="arqueo-diferencia">$ 0,00</strong>
+            </div>
+          </div>
+
+          <div class="form-row mt-3">
+            <button type="button" class="btn btn-secondary col-6" id="btn-cancel-arqueo">Cancelar</button>
+            <button type="submit" class="btn btn-primary col-6" id="btn-save-arqueo">Guardar Arqueo</button>
           </div>
         </form>
       </div>

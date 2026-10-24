@@ -80,6 +80,13 @@ const state = {
   pivotMode: "months",          // Modo temporal de la tabla pivot ("months" | "years")
   privacyMode: getStoredItem("finance_privacy_mode") === "true", // Modo Privacidad (Ocultar/Mostrar importes)
 
+  // Arqueo y Notificaciones
+  cuentasArqueo: [],
+  currentSaldoApp: 0,
+  ultimoArqueo: null,
+  notificationEmails: [],
+  geminiApiKey: "",
+
   charts: {
     categories: null,
     monthly: null,
@@ -362,10 +369,14 @@ function updateUiMeta() {
  */
 async function updateHomeBalance() {
   const saldoEl = document.getElementById("home-saldo-amount");
+  const activityEl = document.getElementById("home-last-activity");
   if (!saldoEl) return;
 
   if (state.lastDashboardKpis && state.lastDashboardKpis.saldo !== undefined && !state.dashboardNeedsRefresh) {
     saldoEl.innerText = Utils.formatCurrency(state.lastDashboardKpis.saldo);
+    if (activityEl && state.cachedDashboardData && state.cachedDashboardData.lastActivityTimestamp) {
+      activityEl.innerText = state.cachedDashboardData.lastActivityTimestamp;
+    }
     return;
   }
 
@@ -377,7 +388,11 @@ async function updateHomeBalance() {
         state.cachedDashboardData = res.data;
         state.dashboardNeedsRefresh = false;
         state.lastDashboardKpis = res.data.kpis;
+        state.currentSaldoApp = res.data.kpis.saldo;
         saldoEl.innerText = Utils.formatCurrency(res.data.kpis.saldo);
+        if (activityEl && res.data.lastActivityTimestamp) {
+          activityEl.innerText = res.data.lastActivityTimestamp;
+        }
       }
     } catch (e) {
       // Si falla silencio, mantener último o guion
@@ -680,6 +695,16 @@ function resetMovementForm() {
   document.getElementById("mov-usd-tc").value = "";
   document.getElementById("usd-fields").classList.add("hidden");
 
+  // Limpiar comprobante escaneado
+  const receiptFile = document.getElementById("mov-receipt-file");
+  if (receiptFile) receiptFile.value = "";
+  const receiptUrl = document.getElementById("mov-comprobante-url");
+  if (receiptUrl) receiptUrl.value = "";
+  const receiptPrev = document.getElementById("receipt-preview-container");
+  if (receiptPrev) receiptPrev.classList.add("hidden");
+  const suggestedBadge = document.getElementById("receipt-suggested-badge");
+  if (suggestedBadge) suggestedBadge.classList.add("hidden");
+
   // Rellenar selectores principales
   populateCategories("Egreso");
   populatePaymentMethods();
@@ -851,6 +876,11 @@ async function handleMovementSubmit(e) {
     monto: monto,
     comentario: comentario
   };
+
+  const comprobanteUrl = document.getElementById("mov-comprobante-url") ? document.getElementById("mov-comprobante-url").value : "";
+  if (comprobanteUrl) {
+    payload.comprobanteUrl = comprobanteUrl;
+  }
 
   // Validar datos USD si corresponde
   const subSelect = document.getElementById("mov-subcategoria");
@@ -1217,6 +1247,18 @@ async function loadDashboardData(force = false) {
  */
 function renderDashboard(data) {
   if (!data) return;
+
+  // Actualizar última actividad y saldo actual en memoria
+  if (data.lastActivityTimestamp) {
+    const activityEl = document.getElementById("home-last-activity");
+    if (activityEl) activityEl.innerText = data.lastActivityTimestamp;
+  }
+  if (data.kpis && data.kpis.saldo !== undefined) {
+    state.currentSaldoApp = data.kpis.saldo;
+  }
+  if (data.ultimoArqueo) {
+    state.ultimoArqueo = data.ultimoArqueo;
+  }
 
   // 1. Renderizar KPIs principales y analíticos
   try {
@@ -2223,6 +2265,24 @@ function renderAdminConsole(data) {
     document.getElementById("cfg-mp-nombre").value = item.NOMBRE;
     document.getElementById("cfg-mp-estado").value = item.ESTADO;
   });
+
+  // Cuentas de Arqueo Real
+  if (data.cuentasArqueo) {
+    state.cuentasArqueo = data.cuentasArqueo;
+    renderCatalogList("list-cfg-cuentas-arqueo", data.cuentasArqueo, "ID_CUENTA", "CUENTAS_ARQUEO", (item) => {
+      document.getElementById("cfg-cta-id").value = item.ID_CUENTA;
+      document.getElementById("cfg-cta-nombre").value = item.NOMBRE;
+      document.getElementById("cfg-cta-estado").value = item.ESTADO;
+    });
+  }
+
+  // Notificaciones por Email y Gemini
+  state.notificationEmails = data.notificationEmails || [];
+  renderConfigEmailsList();
+  const geminiInput = document.getElementById("cfg-gemini-key");
+  if (geminiInput) {
+    geminiInput.value = data.geminiApiKey || "";
+  }
 }
 
 /**
@@ -2355,6 +2415,463 @@ async function handleCatalogSubmit(e, entityType, pkField, idInputId, getDataCal
   } finally {
     hideLoader();
   }
+}
+
+// ==========================================================================
+// GESTIÓN DE NOTIFICACIONES, ARQUEO Y COMPROBANTES CON IA
+// ==========================================================================
+
+/**
+ * Renderiza la lista de destinatarios de correo en la pestaña de Notificaciones.
+ */
+function renderConfigEmailsList() {
+  const container = document.getElementById("list-cfg-emails");
+  if (!container) return;
+  container.innerHTML = "";
+
+  if (!state.notificationEmails || state.notificationEmails.length === 0) {
+    container.innerHTML = '<div class="p-2 text-center text-secondary small">No hay correos configurados.</div>';
+    return;
+  }
+
+  state.notificationEmails.forEach((email, idx) => {
+    const item = document.createElement("div");
+    item.className = "email-recipient-chip";
+    item.innerHTML = `
+      <span class="email-recipient-address">${email}</span>
+      <button type="button" class="btn-remove-email" data-index="${idx}" title="Eliminar">&times;</button>
+    `;
+    item.querySelector(".btn-remove-email").addEventListener("click", () => {
+      removeNotificationEmail(idx);
+    });
+    container.appendChild(item);
+  });
+}
+
+/**
+ * Elimina un correo de la lista de notificaciones y guarda en backend.
+ */
+async function removeNotificationEmail(index) {
+  if (index < 0 || index >= state.notificationEmails.length) return;
+  const removed = state.notificationEmails.splice(index, 1);
+  renderConfigEmailsList();
+  try {
+    const res = await apiRequest("saveNotificationSettings", {
+      notificationEmails: state.notificationEmails
+    });
+    if (!res.success) {
+      alert("Error al actualizar destinatarios: " + res.message);
+      // Revertir si falló
+      state.notificationEmails.splice(index, 0, removed[0]);
+      renderConfigEmailsList();
+    }
+  } catch (err) {
+    alert("Error de conexión al eliminar correo.");
+    state.notificationEmails.splice(index, 0, removed[0]);
+    renderConfigEmailsList();
+  }
+}
+
+/**
+ * Agrega un nuevo correo de notificación.
+ */
+async function handleConfigEmailAdd(e) {
+  e.preventDefault();
+  const input = document.getElementById("cfg-new-email");
+  if (!input) return;
+  const email = input.value.trim().toLowerCase();
+
+  if (!email || !email.includes("@") || !email.includes(".")) {
+    alert("Ingresa una dirección de correo válida.");
+    return;
+  }
+
+  if (state.notificationEmails.includes(email)) {
+    alert("Este correo ya está en la lista.");
+    return;
+  }
+
+  showLoader("Guardando destinatario...");
+  try {
+    const updatedList = [...state.notificationEmails, email];
+    const res = await apiRequest("saveNotificationSettings", {
+      notificationEmails: updatedList
+    });
+    if (res.success) {
+      state.notificationEmails = updatedList;
+      input.value = "";
+      renderConfigEmailsList();
+    } else {
+      alert("Error al guardar: " + res.message);
+    }
+  } catch (err) {
+    alert("Error de conexión al guardar correo.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Guarda la clave de Gemini para lectura inteligente de tickets.
+ */
+async function handleConfigGeminiSubmit(e) {
+  e.preventDefault();
+  const input = document.getElementById("cfg-gemini-key");
+  if (!input) return;
+  const key = input.value.trim();
+
+  showLoader("Guardando clave de Gemini...");
+  try {
+    const res = await apiRequest("saveNotificationSettings", {
+      geminiApiKey: key
+    });
+    if (res.success) {
+      state.geminiApiKey = key;
+      alert("Clave de Gemini guardada correctamente.");
+    } else {
+      alert("Error al guardar clave: " + res.message);
+    }
+  } catch (err) {
+    alert("Error de conexión al guardar clave de Gemini.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Envía un correo de prueba manual de inmediato.
+ */
+async function handleSendTestEmail() {
+  if (!state.notificationEmails || state.notificationEmails.length === 0) {
+    alert("Primero debes agregar al menos una dirección de correo en la lista.");
+    return;
+  }
+
+  showLoader("Enviando correo de prueba...");
+  try {
+    const res = await apiRequest("sendTestEmail");
+    if (res.success) {
+      alert(res.message || "Correo de prueba enviado con éxito.");
+    } else {
+      alert("No se pudo enviar el correo: " + res.message);
+    }
+  } catch (err) {
+    alert("Error de conexión al enviar correo de prueba.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Abre el modal de arqueo vs dinero real y carga los datos actuales.
+ */
+async function openArqueoModal() {
+  showLoader("Cargando arqueo...");
+  try {
+    const res = await apiRequest("getArqueoData");
+    if (res.success && res.data) {
+      state.cuentasArqueo = res.data.cuentas || [];
+      state.ultimoArqueo = res.data.ultimoArqueo || null;
+      if (res.data.saldoActual !== undefined) {
+        state.currentSaldoApp = res.data.saldoActual;
+      }
+
+      // 1. Badge de fecha del último arqueo
+      const badge = document.getElementById("arqueo-last-date-badge");
+      if (badge) {
+        if (state.ultimoArqueo && state.ultimoArqueo.FECHA) {
+          badge.innerText = `Último arqueo: ${state.ultimoArqueo.FECHA}`;
+        } else {
+          badge.innerText = "Último arqueo: Sin registros previos";
+        }
+      }
+
+      // 2. Renderizar filas de cuentas dinámicas
+      const container = document.getElementById("arqueo-accounts-container");
+      container.innerHTML = "";
+
+      if (state.cuentasArqueo.length === 0) {
+        container.innerHTML = '<div class="text-secondary small p-2">No hay cuentas de arqueo configuradas. Puedes agregarlas desde Configuración > Catálogos.</div>';
+      } else {
+        const lastDetalle = (state.ultimoArqueo && state.ultimoArqueo.DETALLE) ? state.ultimoArqueo.DETALLE : {};
+        
+        state.cuentasArqueo.forEach(acc => {
+          const row = document.createElement("div");
+          row.className = "arqueo-account-row";
+
+          const prevVal = lastDetalle[acc.NOMBRE] !== undefined ? lastDetalle[acc.NOMBRE] : "";
+          const displayVal = prevVal !== "" ? (typeof prevVal === "number" ? prevVal.toLocaleString("es-AR", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) : prevVal) : "";
+
+          row.innerHTML = `
+            <label for="arq-acc-${acc.ID_CUENTA}">${acc.NOMBRE}</label>
+            <input type="text" 
+                   inputmode="decimal" 
+                   id="arq-acc-${acc.ID_CUENTA}" 
+                   class="arqueo-account-input" 
+                   data-cuenta-id="${acc.ID_CUENTA}" 
+                   data-cuenta-nombre="${acc.NOMBRE}" 
+                   placeholder="0,00" 
+                   value="${displayVal}">
+          `;
+
+          const inputEl = row.querySelector("input");
+          inputEl.addEventListener("input", recalculateArqueoTotals);
+          container.appendChild(row);
+        });
+      }
+
+      recalculateArqueoTotals();
+      document.getElementById("modal-arqueo").classList.remove("hidden");
+    } else {
+      alert("Error al cargar datos de arqueo: " + (res ? res.message : "Error desconocido"));
+    }
+  } catch (err) {
+    console.error("Error al abrir modal arqueo:", err);
+    alert("Error de conexión al cargar datos de arqueo.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Cierra el modal de arqueo.
+ */
+function closeArqueoModal() {
+  const modal = document.getElementById("modal-arqueo");
+  if (modal) modal.classList.add("hidden");
+}
+
+/**
+ * Recalcula en tiempo real el total de dinero real, saldo en la app y diferencia.
+ */
+function recalculateArqueoTotals() {
+  const inputs = document.querySelectorAll(".arqueo-account-input");
+  let totalReal = 0;
+
+  inputs.forEach(inp => {
+    const val = Utils.parseNumber(inp.value);
+    totalReal += val;
+  });
+
+  const saldoApp = state.currentSaldoApp || 0;
+  const diferencia = totalReal - saldoApp;
+
+  const totalEl = document.getElementById("arqueo-total-real");
+  const saldoEl = document.getElementById("arqueo-saldo-app");
+  const diffEl = document.getElementById("arqueo-diferencia");
+
+  if (totalEl) totalEl.innerText = Utils.formatCurrency(totalReal);
+  if (saldoEl) saldoEl.innerText = Utils.formatCurrency(saldoApp);
+
+  if (diffEl) {
+    diffEl.innerText = Utils.formatCurrency(diferencia);
+    diffEl.classList.remove("diff-match", "diff-surplus", "diff-shortage");
+    if (Math.abs(diferencia) < 0.01) {
+      diffEl.classList.add("diff-match");
+    } else if (diferencia > 0) {
+      diffEl.classList.add("diff-surplus");
+    } else {
+      diffEl.classList.add("diff-shortage");
+    }
+  }
+}
+
+/**
+ * Guarda el arqueo actual en Google Sheets (Variables.ULTIMO_ARQUEO).
+ */
+async function handleSaveArqueo(e) {
+  e.preventDefault();
+  const inputs = document.querySelectorAll(".arqueo-account-input");
+  const detalle = {};
+  let totalReal = 0;
+
+  inputs.forEach(inp => {
+    const cuentaNombre = inp.dataset.cuentaNombre || inp.id;
+    const val = Utils.parseNumber(inp.value);
+    detalle[cuentaNombre] = val;
+    totalReal += val;
+  });
+
+  const saldoApp = state.currentSaldoApp || 0;
+  const diferencia = totalReal - saldoApp;
+
+  showLoader("Guardando arqueo...");
+  try {
+    const res = await apiRequest("saveArqueo", {
+      totalReal: totalReal,
+      saldoApp: saldoApp,
+      diferencia: diferencia,
+      detalle: detalle
+    });
+
+    if (res.success) {
+      state.ultimoArqueo = res.data;
+      if (res.data && res.data.FECHA) {
+        const badge = document.getElementById("arqueo-last-date-badge");
+        if (badge) badge.innerText = `Último arqueo: ${res.data.FECHA}`;
+      }
+      closeArqueoModal();
+      alert("¡Arqueo guardado con éxito!");
+    } else {
+      alert("Error al guardar arqueo: " + res.message);
+    }
+  } catch (err) {
+    console.error("Error al guardar arqueo:", err);
+    alert("Error de conexión al guardar el arqueo.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Comprime una imagen seleccionada por el usuario en el cliente usando HTML5 Canvas.
+ * Limita el tamaño a max 1200x1200px y formato JPEG 0.8 para envíos ligeros y rápidos.
+ */
+function compressImage(file, maxWidth = 1200, maxHeight = 1200, quality = 0.8) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = reject;
+    reader.onload = (e) => {
+      const img = new Image();
+      img.onerror = reject;
+      img.onload = () => {
+        let width = img.width;
+        let height = img.height;
+
+        if (width > height) {
+          if (width > maxWidth) {
+            height = Math.round((height * maxWidth) / width);
+            width = maxWidth;
+          }
+        } else {
+          if (height > maxHeight) {
+            width = Math.round((width * maxHeight) / height);
+            height = maxHeight;
+          }
+        }
+
+        const canvas = document.createElement("canvas");
+        canvas.width = width;
+        canvas.height = height;
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, width, height);
+
+        const dataUrl = canvas.toDataURL("image/jpeg", quality);
+        const base64Data = dataUrl.split(",")[1];
+        resolve({
+          dataUrl: dataUrl,
+          base64Data: base64Data,
+          mimeType: "image/jpeg"
+        });
+      };
+      img.src = e.target.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/**
+ * Maneja la subida del comprobante/ticket, previsualización y análisis automático con IA.
+ */
+async function handleReceiptFileChange(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file) return;
+
+  showLoader("Procesando y analizando ticket...");
+  try {
+    const compressed = await compressImage(file);
+
+    // Mostrar previsualización de inmediato
+    const prevImg = document.getElementById("receipt-preview-img");
+    const prevContainer = document.getElementById("receipt-preview-container");
+    const statusText = document.getElementById("receipt-status-text");
+    const suggestedBadge = document.getElementById("receipt-suggested-badge");
+
+    if (prevImg) prevImg.src = compressed.dataUrl;
+    if (prevContainer) prevContainer.classList.remove("hidden");
+    if (statusText) statusText.innerText = "Subiendo a Drive...";
+    if (suggestedBadge) suggestedBadge.classList.add("hidden");
+
+    const response = await apiRequest("uploadReceipt", {
+      base64Data: compressed.base64Data,
+      mimeType: compressed.mimeType,
+      fileName: file.name || "ticket.jpg"
+    });
+
+    if (response.success && response.data) {
+      if (statusText) statusText.innerText = "Comprobante adjuntado";
+      const urlInput = document.getElementById("mov-comprobante-url");
+      if (urlInput) urlInput.value = response.data.fileUrl || "";
+
+      // Si Gemini extrajo datos, autocompletar campos sugeridos en el formulario
+      if (response.data.extracted) {
+        const ext = response.data.extracted;
+        if (suggestedBadge) suggestedBadge.classList.remove("hidden");
+
+        if (ext.monto && !isNaN(Number(ext.monto))) {
+          const montoInput = document.getElementById("mov-monto");
+          if (montoInput) montoInput.value = ext.monto;
+        }
+
+        if (ext.fecha && /^\d{4}-\d{2}-\d{2}$/.test(ext.fecha)) {
+          const fechaInput = document.getElementById("mov-fecha");
+          if (fechaInput) fechaInput.value = ext.fecha;
+        }
+
+        if (ext.concepto) {
+          const comInput = document.getElementById("mov-comentario");
+          if (comInput) comInput.value = ext.concepto;
+        }
+
+        // Sugerir categoría si coincide
+        if (ext.categoria && state.catalog && state.catalog.categories) {
+          const catSelect = document.getElementById("mov-categoria");
+          const extCatLower = ext.categoria.toLowerCase();
+          for (let opt of catSelect.options) {
+            if (opt.value && (opt.value.toLowerCase().includes(extCatLower) || extCatLower.includes(opt.value.toLowerCase()))) {
+              catSelect.value = opt.value;
+              catSelect.dispatchEvent(new Event("change"));
+              break;
+            }
+          }
+        }
+
+        // Sugerir medio de pago si coincide
+        if (ext.medioPago && state.catalog && state.catalog.paymentMethods) {
+          const mpSelect = document.getElementById("mov-medio-pago");
+          const extMpLower = ext.medioPago.toLowerCase();
+          for (let opt of mpSelect.options) {
+            if (opt.value && (opt.value.toLowerCase().includes(extMpLower) || extMpLower.includes(opt.value.toLowerCase()))) {
+              mpSelect.value = opt.value;
+              break;
+            }
+          }
+        }
+      }
+    } else {
+      alert("Aviso: " + (response.message || "No se pudo subir a Drive"));
+      if (statusText) statusText.innerText = "Error al subir";
+    }
+  } catch (err) {
+    console.error("Error al procesar ticket:", err);
+    alert("No se pudo procesar la imagen del ticket.");
+  } finally {
+    hideLoader();
+  }
+}
+
+/**
+ * Quita el comprobante adjunto del formulario de movimiento.
+ */
+function handleRemoveReceipt() {
+  const fileInput = document.getElementById("mov-receipt-file");
+  if (fileInput) fileInput.value = "";
+  const urlInput = document.getElementById("mov-comprobante-url");
+  if (urlInput) urlInput.value = "";
+  const prevContainer = document.getElementById("receipt-preview-container");
+  if (prevContainer) prevContainer.classList.add("hidden");
+  const suggestedBadge = document.getElementById("receipt-suggested-badge");
+  if (suggestedBadge) suggestedBadge.classList.add("hidden");
 }
 
 // ==========================================================================
@@ -2693,6 +3210,79 @@ function initEventListeners() {
         }
       });
     });
+  }
+
+  // Arqueo vs Dinero Real
+  const btnOpenArqueo = document.getElementById("btn-open-arqueo");
+  if (btnOpenArqueo) {
+    btnOpenArqueo.addEventListener("click", openArqueoModal);
+  }
+
+  const btnCloseArqueo = document.getElementById("btn-close-arqueo");
+  if (btnCloseArqueo) {
+    btnCloseArqueo.addEventListener("click", closeArqueoModal);
+  }
+
+  const btnCancelArqueo = document.getElementById("btn-cancel-arqueo");
+  if (btnCancelArqueo) {
+    btnCancelArqueo.addEventListener("click", closeArqueoModal);
+  }
+
+  const formArqueo = document.getElementById("form-arqueo");
+  if (formArqueo) {
+    formArqueo.addEventListener("submit", handleSaveArqueo);
+  }
+
+  // Notificaciones e IA (Configuración)
+  const formCfgCuentasArqueo = document.getElementById("form-config-cuentas-arqueo");
+  if (formCfgCuentasArqueo) {
+    formCfgCuentasArqueo.addEventListener("submit", (e) => {
+      handleCatalogSubmit(
+        e,
+        "CUENTAS_ARQUEO",
+        "ID_CUENTA",
+        "cfg-cta-id",
+        () => ({
+          NOMBRE: document.getElementById("cfg-cta-nombre").value.trim(),
+          ESTADO: document.getElementById("cfg-cta-estado").value
+        }),
+        () => {
+          document.getElementById("cfg-cta-id").value = "";
+          document.getElementById("cfg-cta-nombre").value = "";
+          document.getElementById("cfg-cta-estado").value = "Activo";
+        }
+      );
+    });
+  }
+
+  const formCfgEmailAdd = document.getElementById("form-config-email-add");
+  if (formCfgEmailAdd) {
+    formCfgEmailAdd.addEventListener("submit", handleConfigEmailAdd);
+  }
+
+  const btnTestEmail = document.getElementById("btn-test-email");
+  if (btnTestEmail) {
+    btnTestEmail.addEventListener("click", handleSendTestEmail);
+  }
+
+  const formCfgGemini = document.getElementById("form-config-gemini");
+  if (formCfgGemini) {
+    formCfgGemini.addEventListener("submit", handleConfigGeminiSubmit);
+  }
+
+  // Escaneo de comprobantes / fotos de ticket
+  const btnScanReceipt = document.getElementById("btn-scan-receipt");
+  const movReceiptFile = document.getElementById("mov-receipt-file");
+  if (btnScanReceipt && movReceiptFile) {
+    btnScanReceipt.addEventListener("click", () => {
+      movReceiptFile.click();
+    });
+    movReceiptFile.addEventListener("change", handleReceiptFileChange);
+  }
+
+  const btnRemoveReceipt = document.getElementById("btn-remove-receipt");
+  if (btnRemoveReceipt) {
+    btnRemoveReceipt.addEventListener("click", handleRemoveReceipt);
   }
 }
 
