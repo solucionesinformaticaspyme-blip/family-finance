@@ -2535,6 +2535,105 @@ async function loadAnalysisView(force = false) {
  * Renderiza las tarjetas de conclusiones ordenadas por impacto financiero.
  * @param {Object} data - Objeto con { insights, summary }.
  */
+/**
+ * v1.4: Tarjetas de "Pronóstico de cierre del mes" y "Presupuesto del mes" (semáforo).
+ * Usa los datos { forecast, budgets } que devuelve getFinancialInsights.
+ */
+function renderForecastAndBudgetHtml(data) {
+  if (!data) return "";
+  const f = data.forecast;
+  const b = data.budgets;
+  const money = v => Utils.formatCurrency(v || 0);
+  const esc = t => escapeHtml(String(t == null ? "" : t));
+  let html = "";
+
+  const row = (label, value, opts = {}) => `
+    <div style="display:flex;justify-content:space-between;align-items:baseline;padding:6px 0;border-bottom:1px solid var(--border-light);${opts.strong ? "font-weight:700;" : ""}">
+      <span style="color:var(--text-secondary);font-size:13px;">${label}</span>
+      <span style="font-size:${opts.big ? "17px" : "14px"};${opts.color ? "color:" + opts.color + ";" : ""}">${value}</span>
+    </div>`;
+
+  if (f) {
+    const progress = Math.round((f.dia / f.diasMes) * 100);
+    const res = f.resultadoProyectado;
+    const resColor = res < 0 ? "var(--danger-color)" : "var(--success-color)";
+    const saldoColor = f.saldoFinMesProyectado < 0 ? "var(--danger-color)" : "var(--primary-color)";
+    const varTxt = (f.varGastoVsPromedioPct === null || f.varGastoVsPromedioPct === undefined) ? "" :
+      ` <small style="color:${f.varGastoVsPromedioPct > 0 ? "var(--danger-color)" : "var(--success-color)"};">(${f.varGastoVsPromedioPct > 0 ? "+" : ""}${f.varGastoVsPromedioPct}% vs habitual)</small>`;
+    const conf = { buena: "buena", media: "media", baja: "baja" }[f.confianza] || f.confianza;
+    html += `
+      <div class="card" style="background:var(--card-bg);border-radius:var(--radius-md);padding:16px;margin-bottom:14px;box-shadow:var(--shadow-sm);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:6px;">
+          <h4 style="margin:0;font-size:15px;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-rounded" style="font-size:20px;color:var(--primary-color);">query_stats</span>
+            Pronóstico de cierre · ${esc(f.periodoLabel)}
+          </h4>
+          <span style="font-size:11px;color:var(--text-secondary);">Día ${f.dia} de ${f.diasMes}</span>
+        </div>
+        <div class="progress-bar-container" style="margin-bottom:10px;"><div class="progress-bar-fill" style="width:${progress}%;background:var(--primary-color);"></div></div>
+        ${row("Gastado a la fecha", money(f.egresos.aLaFecha))}
+        ${row("Gasto proyectado del mes", money(f.egresos.proyectado) + varTxt, { strong: true })}
+        ${f.ahorroEnEgresos && f.ahorroEnEgresos.proyectado > 0 ? row("…de lo cual va a ahorro/inversión", money(f.ahorroEnEgresos.proyectado)) : ""}
+        ${row("Ingresos proyectados", money(f.ingresos.proyectado))}
+        ${row("Resultado proyectado del mes", money(res), { strong: true, color: resColor })}
+        ${f.tasaAhorroRealPct !== null && f.tasaAhorroRealPct !== undefined ? row("Ahorro real proyectado (incluye inversión)", money(f.ahorroRealProyectado) + ` <small>(${f.tasaAhorroRealPct}% de ingresos)</small>`, { color: f.ahorroRealProyectado < 0 ? "var(--danger-color)" : "var(--success-color)" }) : ""}
+        ${row("Saldo disponible estimado a fin de mes", money(f.saldoFinMesProyectado), { strong: true, big: true, color: saldoColor })}
+        <p class="text-secondary" style="font-size:11px;margin:8px 0 0;">
+          Calculado con tu ritmo habitual de gastos e ingresos de ${esc(f.mesesReferenciaLabel)} (confiabilidad ${conf}). Montos nominales, sin ajuste por inflación.
+        </p>
+      </div>`;
+  } else {
+    html += `
+      <div class="card" style="background:var(--card-bg);border-radius:var(--radius-md);padding:14px;margin-bottom:14px;">
+        <h4 style="margin:0 0 4px;font-size:15px;">Pronóstico de cierre del mes</h4>
+        <p class="text-secondary small" style="margin:0;">Se activa automáticamente cuando haya al menos un mes completo de movimientos registrados.</p>
+      </div>`;
+  }
+
+  if (b && b.items && b.items.length > 0) {
+    const COLORS = { rojo: "var(--danger-color)", amarillo: "#E0A100", verde: "var(--success-color)", nuevo: "#94A3B8" };
+    const LABEL = { rojo: "Superado", amarillo: "Cerca", verde: "En rango", nuevo: "Nuevo" };
+    const totalPct = b.totalPresupuesto > 0 ? Math.round((b.totalGastado / b.totalPresupuesto) * 100) : 0;
+    let itemsHtml = "";
+    b.items.forEach(it => {
+      const color = COLORS[it.estado] || COLORS.nuevo;
+      const width = it.pct === null ? 100 : Math.min(100, it.pct);
+      itemsHtml += `
+        <div class="percentage-item">
+          <div class="percentage-header">
+            <span class="percentage-label" style="display:flex;align-items:center;gap:8px;">
+              <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;" title="${LABEL[it.estado] || ""}"></span>
+              ${esc(it.categoria)}${it.esAhorro ? ' <small class="text-secondary">(ahorro)</small>' : ""}
+            </span>
+            <span class="percentage-values" style="white-space:nowrap;"><strong>${Utils.formatCompactCurrency(it.gastado)}</strong> / ${Utils.formatCompactCurrency(it.presupuesto)}${it.pct !== null ? " · " + it.pct + "%" : ""}</span>
+          </div>
+          <div class="progress-bar-container">
+            <div class="progress-bar-fill" style="width:${width}%;background:${color};"></div>
+          </div>
+        </div>`;
+    });
+    html += `
+      <div class="card" style="background:var(--card-bg);border-radius:var(--radius-md);padding:16px;margin-bottom:14px;box-shadow:var(--shadow-sm);">
+        <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:4px;">
+          <h4 style="margin:0;font-size:15px;color:var(--text-primary);display:flex;align-items:center;gap:6px;">
+            <span class="material-symbols-rounded" style="font-size:20px;color:var(--primary-color);">traffic</span>
+            Presupuesto del mes
+          </h4>
+          <span style="font-size:12px;font-weight:700;">${totalPct}% usado</span>
+        </div>
+        <p class="text-secondary" style="font-size:11px;margin:0 0 10px;">
+          Presupuesto automático = ${esc(b.base)}. 🟢 en rango · 🟡 90–110% · 🔴 más de 10% por encima.
+        </p>
+        ${itemsHtml}
+      </div>`;
+  }
+
+  if (html) {
+    html += `<h4 style="font-size:14px;margin:6px 0 10px;color:var(--text-primary);">Conclusiones</h4>`;
+  }
+  return html;
+}
+
 function renderAnalysisInsights(data) {
   const container = document.getElementById("analysis-insights-container");
   if (!container) return;
@@ -2549,8 +2648,16 @@ function renderAnalysisInsights(data) {
   if (statCount) statCount.innerText = summary.totalInsights !== undefined ? summary.totalInsights : insights.length;
   if (statMax) statMax.innerText = Utils.formatCurrency(summary.maxImpact || 0);
 
+  // v1.4: Pronóstico de cierre y presupuesto automático (arriba de las conclusiones)
+  try {
+    const extra = renderForecastAndBudgetHtml(data);
+    if (extra) container.insertAdjacentHTML("beforeend", extra);
+  } catch (e) {
+    console.error("Error al renderizar pronóstico/presupuesto:", e);
+  }
+
   if (insights.length === 0) {
-    container.innerHTML = `
+    container.innerHTML += `
       <div class="card text-center p-4" style="background: var(--bg-card); border-radius: var(--radius-md);">
         <span class="material-symbols-rounded" style="font-size: 40px; color: var(--text-secondary); opacity: 0.6;">check_circle</span>
         <h4 class="mt-2" style="color: var(--text-primary); font-size: 15px;">Sin desvíos extraordinarios detectados</h4>
