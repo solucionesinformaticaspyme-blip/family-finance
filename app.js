@@ -429,6 +429,7 @@ function showView(viewId) {
     
     // Acciones específicas al cargar ciertas pantallas
     if (viewId === "view-home") {
+      state.editingId = null; // v1.1: al volver al inicio se sale del modo edición
       updateHomeBalance();
       refreshCatalogSilently(); // Refrescar catálogos y validar estado en segundo plano de forma silenciosa
     } else if (viewId === "view-add-movement" && !state.editingId) {
