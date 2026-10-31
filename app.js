@@ -98,6 +98,98 @@ const state = {
 };
 
 // ==========================================================================
+// v1.2 - VELOCIDAD: caché local persistente y control de peticiones duplicadas
+// ==========================================================================
+
+// Cuando se marca "hay que refrescar", se incrementa una generación. Así, si un dato cambia
+// MIENTRAS viaja una petición, su respuesta (ya vieja) no se considera actualizada.
+(function () {
+  const defineGen = (prop, genProp) => {
+    let value = state[prop];
+    state[genProp] = 0;
+    Object.defineProperty(state, prop, {
+      get() { return value; },
+      set(v) { if (v) state[genProp]++; value = v; },
+      enumerable: true,
+      configurable: true
+    });
+  };
+  defineGen("dashboardNeedsRefresh", "_dashGen");
+  defineGen("analysisNeedsRefresh", "_analysisGen");
+})();
+state.catalogLoadedAt = 0;
+const CATALOG_REFRESH_MS = 5 * 60 * 1000; // re-validar catálogos/usuario cada 5 minutos como máximo
+
+/** Guarda datos en el dispositivo asociados a este dispositivo vinculado. */
+function writeLocalCache(key, data) {
+  try {
+    localStorage.setItem(key, JSON.stringify({ token: state.deviceToken, savedAt: Date.now(), data: data }));
+  } catch (e) { /* almacenamiento lleno o no disponible: se ignora */ }
+}
+
+/** Lee datos guardados en el dispositivo (solo si pertenecen al dispositivo vinculado actual). */
+function readLocalCache(key) {
+  try {
+    const raw = localStorage.getItem(key);
+    if (!raw) return null;
+    const obj = JSON.parse(raw);
+    if (!obj || obj.token !== state.deviceToken) return null;
+    return obj.data || null;
+  } catch (e) {
+    return null;
+  }
+}
+
+let _dashboardInflight = null;
+/**
+ * Pide el dashboard al servidor. Si ya hay una petición en curso, reutiliza esa misma
+ * (evita las llamadas duplicadas que antes se disparaban al abrir la app).
+ */
+function fetchDashboard() {
+  if (_dashboardInflight) return _dashboardInflight;
+  const gen = state._dashGen;
+  _dashboardInflight = (async () => {
+    try {
+      const res = await apiRequest("getDashboard");
+      if (res && res.success && res.data) {
+        state.cachedDashboardData = res.data;
+        if (res.data.kpis) {
+          state.lastDashboardKpis = res.data.kpis;
+          state.currentSaldoApp = res.data.kpis.saldo;
+        }
+        if (state._dashGen === gen) state.dashboardNeedsRefresh = false;
+        writeLocalCache("finance_cache_dashboard", res.data);
+      }
+      return res;
+    } finally {
+      _dashboardInflight = null;
+    }
+  })();
+  return _dashboardInflight;
+}
+
+/** Gira el ícono de un botón mientras se actualiza en segundo plano. */
+function setButtonSpinning(btnId, spinning) {
+  const btn = document.getElementById(btnId);
+  if (!btn) return;
+  try {
+    if (spinning) {
+      if (!btn._spinAnim) {
+        btn._spinAnim = btn.animate([{ transform: "rotate(0deg)" }, { transform: "rotate(360deg)" }], { duration: 900, iterations: Infinity });
+      }
+    } else if (btn._spinAnim) {
+      btn._spinAnim.cancel();
+      btn._spinAnim = null;
+    }
+  } catch (e) {}
+}
+
+function isViewActive(viewId) {
+  const el = document.getElementById(viewId);
+  return !!(el && el.classList.contains("active"));
+}
+
+// ==========================================================================
 // MÓDULO CRIPTOGRÁFICO DE EXTREMO A EXTREMO (E2EE - ZERO KNOWLEDGE)
 // ==========================================================================
 const CryptoUtils = {
@@ -271,6 +363,37 @@ async function bootApp() {
     return;
   }
 
+  // v1.2: si este dispositivo ya tiene datos guardados, la app abre AL INSTANTE con ellos
+  // y la verificación con el servidor se hace en segundo plano.
+  const cachedDash = readLocalCache("finance_cache_dashboard");
+  if (cachedDash && !state.cachedDashboardData) {
+    state.cachedDashboardData = cachedDash;
+    state.lastDashboardKpis = cachedDash.kpis || null;
+    state.dashboardNeedsRefresh = true; // se mostrará, pero se actualiza igual
+  }
+  const cachedAnalysis = readLocalCache("finance_cache_analysis");
+  if (cachedAnalysis && !state.cachedAnalysisData) {
+    state.cachedAnalysisData = cachedAnalysis;
+    state.analysisNeedsRefresh = true;
+  }
+  const cachedCatalog = readLocalCache("finance_cache_catalog");
+  if (cachedCatalog && !state.catalog) {
+    state.catalog = cachedCatalog;
+    const cachedUser = getStoredItem("finance_user");
+    if (cachedUser && !state.user) {
+      try { state.user = JSON.parse(cachedUser); } catch (e) {}
+    }
+    state.catalogLoadedAt = Date.now(); // evita una segunda consulta de catálogos al mostrar el inicio
+    updateUiMeta();
+    if (state.catalog.pinActivado && !state.pinVerified) {
+      showView("view-pin");
+    } else {
+      showView("view-home");
+    }
+    validateDeviceInBackground();
+    return;
+  }
+
   showLoader("Verificando dispositivo...");
 
   try {
@@ -279,6 +402,8 @@ async function bootApp() {
 
     if (response.success) {
       state.catalog = response.data;
+      state.catalogLoadedAt = Date.now();
+      writeLocalCache("finance_cache_catalog", response.data);
       
       // Sincronizar dinámicamente el perfil del usuario activo retornado por la API
       if (response.data.user) {
@@ -336,6 +461,53 @@ async function bootApp() {
 }
 
 /**
+ * v1.2: Verifica el dispositivo y actualiza catálogos en segundo plano (arranque instantáneo).
+ * Si el servidor indica que el dispositivo está pendiente o no existe, se actúa igual que antes.
+ * Ante un error de red se mantiene la app abierta con los datos guardados (antes enviaba a la
+ * pantalla de vinculación).
+ */
+async function validateDeviceInBackground() {
+  try {
+    const response = await apiRequest("getUiCatalogues");
+    if (response && response.success) {
+      state.catalog = response.data;
+      state.catalogLoadedAt = Date.now();
+      writeLocalCache("finance_cache_catalog", response.data);
+      if (response.data.user) {
+        state.user = response.data.user;
+        setStoredItem("finance_user", JSON.stringify(state.user));
+        setStoredItem("finance_user_name", state.user.nombre);
+      }
+      if (response.data.geminiApiKey) {
+        state.geminiApiKey = response.data.geminiApiKey;
+        setStoredItem("finance_gemini_api_key", response.data.geminiApiKey);
+      }
+      updateUiMeta();
+      // Si el PIN se activó desde otro dispositivo, se exige ahora
+      if (state.catalog.pinActivado && !state.pinVerified && !isViewActive("view-pin")) {
+        showView("view-pin");
+      }
+    } else if (response) {
+      if (response.errorCode === "ERR_DEVICE_PENDING" || (response.message && response.message.includes("ERR_DEVICE_PENDING"))) {
+        document.getElementById("pending-device-id").innerText = state.deviceToken.substring(0, 8).toUpperCase();
+        showView("view-pending");
+      } else if (response.errorCode === "ERR_DEVICE_NOT_FOUND" || (response.message && response.message.includes("ERR_DEVICE_NOT_FOUND"))) {
+        if (confirm("Este dispositivo no figura registrado en la planilla. ¿Deseas desconectarlo para volver a vincularlo?")) {
+          logout();
+        } else {
+          prefillSetupForm();
+          showView("view-setup");
+        }
+      } else {
+        console.warn("Verificación en segundo plano sin éxito:", response.message);
+      }
+    }
+  } catch (error) {
+    console.warn("Sin conexión para verificar el dispositivo; se usan los datos guardados.", error);
+  }
+}
+
+/**
  * Pre-llena los inputs del formulario de vinculación si ya existen credenciales guardadas.
  */
 function prefillSetupForm() {
@@ -379,34 +551,31 @@ async function updateHomeBalance() {
   const activityEl = document.getElementById("home-last-activity");
   if (!saldoEl) return;
 
-  if (state.lastDashboardKpis && state.lastDashboardKpis.saldo !== undefined && !state.dashboardNeedsRefresh) {
-    saldoEl.innerText = Utils.formatCurrency(state.lastDashboardKpis.saldo);
-    if (activityEl && state.cachedDashboardData && state.cachedDashboardData.lastActivityTimestamp) {
-      activityEl.innerText = state.cachedDashboardData.lastActivityTimestamp;
+  // v1.2: se pinta al instante el último saldo conocido (atenuado si se está actualizando)
+  const paint = () => {
+    if (state.lastDashboardKpis && state.lastDashboardKpis.saldo !== undefined) {
+      saldoEl.innerText = Utils.formatCurrency(state.lastDashboardKpis.saldo);
+      if (activityEl && state.cachedDashboardData && state.cachedDashboardData.lastActivityTimestamp) {
+        activityEl.innerText = state.cachedDashboardData.lastActivityTimestamp;
+      }
     }
+    saldoEl.style.opacity = state.dashboardNeedsRefresh ? "0.55" : "";
+  };
+  paint();
+
+  if (state.lastDashboardKpis && state.lastDashboardKpis.saldo !== undefined && !state.dashboardNeedsRefresh) {
     return;
   }
 
-  // Si no está en memoria o requiere refresco, consultar silently
+  // Si no está en memoria o requiere refresco, consultar en segundo plano (sin duplicar peticiones)
   if (state.apiUrl && state.deviceToken) {
     try {
-      const res = await apiRequest("getDashboard");
-      if (res && res.success && res.data && res.data.kpis) {
-        state.cachedDashboardData = res.data;
-        state.dashboardNeedsRefresh = false;
-        state.lastDashboardKpis = res.data.kpis;
-        state.currentSaldoApp = res.data.kpis.saldo;
-        saldoEl.innerText = Utils.formatCurrency(res.data.kpis.saldo);
-        if (activityEl && res.data.lastActivityTimestamp) {
-          activityEl.innerText = res.data.lastActivityTimestamp;
-        }
-      }
+      await fetchDashboard();
     } catch (e) {
-      // Si falla silencio, mantener último o guion
-      if (state.lastDashboardKpis) {
-        saldoEl.innerText = Utils.formatCurrency(state.lastDashboardKpis.saldo);
-      }
+      // Si falla en silencio, se mantiene el último valor
     }
+    paint();
+    saldoEl.style.opacity = "";
   }
 }
 
@@ -457,12 +626,19 @@ function showView(viewId) {
 /**
  * Refresca los catálogos en segundo plano de forma silenciosa sin interrumpir la navegación.
  */
+let _catalogInflight = null;
 async function refreshCatalogSilently() {
   if (!state.apiUrl || !state.deviceToken) return;
+  // v1.2: no repetir la consulta si se hizo hace menos de 5 minutos o si ya hay una en curso
+  if (_catalogInflight) return;
+  if (state.catalogLoadedAt && (Date.now() - state.catalogLoadedAt) < CATALOG_REFRESH_MS) return;
+  _catalogInflight = true;
   try {
     const response = await apiRequest("getUiCatalogues");
     if (response.success) {
       state.catalog = response.data;
+      state.catalogLoadedAt = Date.now();
+      writeLocalCache("finance_cache_catalog", response.data);
       if (response.data.user) {
         state.user = response.data.user;
         localStorage.setItem("finance_user", JSON.stringify(state.user));
@@ -471,6 +647,8 @@ async function refreshCatalogSilently() {
     }
   } catch (error) {
     console.error("Error al refrescar catálogo silenciosamente:", error);
+  } finally {
+    _catalogInflight = null;
   }
 }
 
@@ -1108,8 +1286,7 @@ async function handleDeleteMovement(id, detalle = "") {
   try {
     const response = await apiRequest("deleteMovement", { id });
     if (response && response.success) {
-      // Invalidar cachés
-      state.cachedDashboardData = null;
+      // Invalidar cachés (v1.2: se conserva la última versión para mostrarla mientras se actualiza)
       state.dashboardNeedsRefresh = true;
       state.analysisNeedsRefresh = true;
 
@@ -1119,8 +1296,12 @@ async function handleDeleteMovement(id, detalle = "") {
         await searchMovements();
       }
 
-      // Si estamos en el dashboard o inicio, recargar datos de fondo
-      loadDashboardData(true);
+      // Si estamos en el dashboard se actualiza ahí mismo; si no, en segundo plano sin bloquear
+      if (isViewActive("view-dashboard")) {
+        loadDashboardData(true);
+      } else {
+        fetchDashboard().catch(() => {});
+      }
       alert("Movimiento eliminado correctamente.");
     } else {
       alert("Error al eliminar: " + (response && response.message ? response.message : "Error desconocido."));
@@ -1224,29 +1405,41 @@ async function loadDashboardData(force = false) {
     return;
   }
 
+  // v1.2: si hay una versión anterior, se muestra AL INSTANTE y se actualiza en segundo plano
+  // (el botón de refresco gira mientras tanto). Sin datos previos, se usa el cargador de siempre.
+  if (state.cachedDashboardData) {
+    try {
+      renderDashboard(state.cachedDashboardData);
+    } catch (e) {
+      console.error("Error al renderizar dashboard desde caché:", e);
+    }
+    setButtonSpinning("btn-refresh-dashboard", true);
+    try {
+      const response = await fetchDashboard();
+      if (response && response.success && response.data) {
+        if (isViewActive("view-dashboard")) renderDashboard(state.cachedDashboardData);
+      } else {
+        console.warn("Respuesta no satisfactoria, se mantiene la versión anterior:", response);
+      }
+    } catch (error) {
+      console.warn("Error de conexión al refrescar dashboard, se mantiene la versión anterior:", error);
+    } finally {
+      setButtonSpinning("btn-refresh-dashboard", false);
+    }
+    return;
+  }
+
   showLoader("Cargando dashboard...");
   try {
-    const response = await apiRequest("getDashboard");
+    const response = await fetchDashboard();
     if (response && response.success && response.data) {
-      state.cachedDashboardData = response.data;
-      state.dashboardNeedsRefresh = false;
-      renderDashboard(response.data);
+      renderDashboard(state.cachedDashboardData);
     } else {
-      if (state.cachedDashboardData) {
-        console.warn("Respuesta no satisfactoria, mostrando caché anterior:", response);
-        renderDashboard(state.cachedDashboardData);
-      } else {
-        alert("Error al cargar dashboard: " + (response && response.message ? response.message : "Sin respuesta del servidor"));
-      }
+      alert("Error al cargar dashboard: " + (response && response.message ? response.message : "Sin respuesta del servidor"));
     }
   } catch (error) {
     console.error("Error al cargar dashboard:", error);
-    if (state.cachedDashboardData) {
-      console.warn("Error de conexión al refrescar dashboard, mostrando última versión:", error);
-      renderDashboard(state.cachedDashboardData);
-    } else {
-      alert("Error de conexión al cargar el dashboard. Verifica tu conexión a internet.");
-    }
+    alert("Error de conexión al cargar el dashboard. Verifica tu conexión a internet.");
   } finally {
     hideLoader();
   }
@@ -2182,27 +2375,49 @@ async function loadAnalysisView(force = false) {
     return;
   }
 
-  showLoader("Generando análisis y conclusiones...");
-  try {
+  const fetchAnalysis = async () => {
+    const gen = state._analysisGen;
     const response = await apiRequest("getFinancialInsights");
     if (response && response.success && response.data) {
       state.cachedAnalysisData = response.data;
-      state.analysisNeedsRefresh = false;
+      if (state._analysisGen === gen) state.analysisNeedsRefresh = false;
+      writeLocalCache("finance_cache_analysis", response.data);
+    }
+    return response;
+  };
+
+  // v1.2: versión anterior al instante + actualización en segundo plano
+  if (state.cachedAnalysisData) {
+    try {
+      renderAnalysisInsights(state.cachedAnalysisData);
+    } catch (e) {
+      console.error("Error al renderizar análisis desde caché:", e);
+    }
+    setButtonSpinning("btn-refresh-analysis", true);
+    try {
+      const response = await fetchAnalysis();
+      if (response && response.success && response.data && isViewActive("view-analysis")) {
+        renderAnalysisInsights(state.cachedAnalysisData);
+      }
+    } catch (err) {
+      console.warn("Error de conexión al actualizar análisis, se mantiene la versión anterior:", err);
+    } finally {
+      setButtonSpinning("btn-refresh-analysis", false);
+    }
+    return;
+  }
+
+  showLoader("Generando análisis y conclusiones...");
+  try {
+    const response = await fetchAnalysis();
+    if (response && response.success && response.data) {
       renderAnalysisInsights(response.data);
     } else {
-      if (state.cachedAnalysisData) {
-        renderAnalysisInsights(state.cachedAnalysisData);
-      } else {
-        alert("Error al obtener análisis: " + (response && response.message ? response.message : "Sin respuesta"));
-      }
+      alert("Error al obtener análisis: " + (response && response.message ? response.message : "Sin respuesta"));
     }
   } catch (err) {
     console.error("Error al cargar análisis:", err);
-    if (state.cachedAnalysisData) {
-      renderAnalysisInsights(state.cachedAnalysisData);
-    } else {
-      alert("Error de conexión al cargar el análisis financiero.");
-    }
+    alert("Error de conexión al cargar el análisis financiero.");
   } finally {
     hideLoader();
   }
@@ -2481,6 +2696,7 @@ async function handleSystemSettingsSubmit(e) {
   try {
     const response = await apiRequest("saveSystemSettings", payload);
     if (response.success) {
+      state.catalogLoadedAt = 0; // v1.2: nombre de familia / PIN se reflejan al volver al inicio
       alert(response.message);
       loadAdminConsole();
     } else {
@@ -2517,6 +2733,7 @@ async function handleCatalogSubmit(e, entityType, pkField, idInputId, getDataCal
 
     if (response.success) {
       state.dashboardNeedsRefresh = true;
+      state.catalogLoadedAt = 0; // v1.2: forzar recarga de catálogos al volver al inicio
       alert(response.message);
       resetFormCallback();
       loadAdminConsole(); // Recargar toda la consola
