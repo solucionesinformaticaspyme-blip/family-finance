@@ -109,7 +109,13 @@ const state = {
     state[genProp] = 0;
     Object.defineProperty(state, prop, {
       get() { return value; },
-      set(v) { if (v) state[genProp]++; value = v; },
+      set(v) {
+        if (v) {
+          state[genProp]++;
+          if (prop === "dashboardNeedsRefresh") state.remindersFetchedAt = 0; // v1.3: recordatorios también
+        }
+        value = v;
+      },
       enumerable: true,
       configurable: true
     });
@@ -182,6 +188,101 @@ function setButtonSpinning(btnId, spinning) {
       btn._spinAnim = null;
     }
   } catch (e) {}
+}
+
+let _analysisInflight = null;
+/** Pide el análisis financiero (sin duplicar peticiones en curso). */
+function fetchAnalysisData() {
+  if (_analysisInflight) return _analysisInflight;
+  const gen = state._analysisGen;
+  _analysisInflight = (async () => {
+    try {
+      const response = await apiRequest("getFinancialInsights");
+      if (response && response.success && response.data) {
+        state.cachedAnalysisData = response.data;
+        if (state._analysisGen === gen) state.analysisNeedsRefresh = false;
+        writeLocalCache("finance_cache_analysis", response.data);
+      }
+      return response;
+    } finally {
+      _analysisInflight = null;
+    }
+  })();
+  return _analysisInflight;
+}
+
+// ---------- v1.3: Recordatorios y Configuración sin esperas ----------
+state.cachedReminders = null;
+state.remindersFetchedAt = 0;
+state.cachedAdminConsole = null;
+state.adminFetchedAt = 0;
+const PREFETCH_MAX_AGE_MS = 5 * 60 * 1000;
+
+let _remindersInflight = null;
+/** Pide los recordatorios (sin duplicar peticiones en curso) y los guarda en el dispositivo. */
+function fetchReminders() {
+  if (_remindersInflight) return _remindersInflight;
+  _remindersInflight = (async () => {
+    try {
+      const res = await apiRequest("getReminders");
+      if (res && res.success) {
+        state.cachedReminders = res.data || [];
+        state.remindersFetchedAt = Date.now();
+        writeLocalCache("finance_cache_reminders", state.cachedReminders);
+      }
+      return res;
+    } finally {
+      _remindersInflight = null;
+    }
+  })();
+  return _remindersInflight;
+}
+
+let _adminInflight = null;
+/** Pide la consola de administración (sin duplicar peticiones en curso). */
+function fetchAdminConsole() {
+  if (_adminInflight) return _adminInflight;
+  _adminInflight = (async () => {
+    try {
+      const res = await apiRequest("getAdminConsole");
+      if (res && res.success) {
+        state.cachedAdminConsole = res.data;
+        state.adminFetchedAt = Date.now();
+        writeLocalCache("finance_cache_admin", res.data);
+      }
+      return res;
+    } finally {
+      _adminInflight = null;
+    }
+  })();
+  return _adminInflight;
+}
+
+/**
+ * Precarga en segundo plano las pantallas que más se usan, para que abran al instante.
+ * Solo pide lo que no se actualizó en los últimos 5 minutos.
+ */
+let _prefetchTimer = null;
+function schedulePrefetch() {
+  if (_prefetchTimer) return;
+  _prefetchTimer = setTimeout(async () => {
+    _prefetchTimer = null;
+    if (!state.apiUrl || !state.deviceToken || !navigator.onLine) return;
+    try {
+      if (!state.remindersFetchedAt || Date.now() - state.remindersFetchedAt > PREFETCH_MAX_AGE_MS) {
+        await fetchReminders();
+      }
+      if (!state.cachedAnalysisData || state.analysisNeedsRefresh) {
+        await fetchAnalysisData();
+      }
+      if (state.user && state.user.rol === "Administrador" &&
+          (!state.adminFetchedAt || Date.now() - state.adminFetchedAt > PREFETCH_MAX_AGE_MS)) {
+        await fetchAdminConsole();
+      }
+    } catch (e) {
+      console.warn("Precarga en segundo plano no completada:", e);
+    }
+  }, 2500);
 }
 
 function isViewActive(viewId) {
@@ -376,6 +477,10 @@ async function bootApp() {
     state.cachedAnalysisData = cachedAnalysis;
     state.analysisNeedsRefresh = true;
   }
+  const cachedRem = readLocalCache("finance_cache_reminders");
+  if (cachedRem && !state.cachedReminders) state.cachedReminders = cachedRem;
+  const cachedAdmin = readLocalCache("finance_cache_admin");
+  if (cachedAdmin && !state.cachedAdminConsole) state.cachedAdminConsole = cachedAdmin;
   const cachedCatalog = readLocalCache("finance_cache_catalog");
   if (cachedCatalog && !state.catalog) {
     state.catalog = cachedCatalog;
@@ -600,6 +705,7 @@ function showView(viewId) {
     if (viewId === "view-home") {
       state.editingId = null; // v1.1: al volver al inicio se sale del modo edición
       updateHomeBalance();
+      schedulePrefetch(); // v1.3
       refreshCatalogSilently(); // Refrescar catálogos y validar estado en segundo plano de forma silenciosa
     } else if (viewId === "view-add-movement" && !state.editingId) {
       resetMovementForm();
@@ -774,6 +880,17 @@ function logout() {
   state.catalog = null;
   state.pinVerified = false;
   state.editingId = null;
+  // v1.3: borrar también los datos guardados en memoria de la sesión anterior
+  state.cachedDashboardData = null;
+  state.lastDashboardKpis = null;
+  state.cachedAnalysisData = null;
+  state.cachedReminders = null;
+  state.cachedAdminConsole = null;
+  state.remindersFetchedAt = 0;
+  state.adminFetchedAt = 0;
+  state.catalogLoadedAt = 0;
+  state.dashboardNeedsRefresh = true;
+  state.analysisNeedsRefresh = true;
   prefillSetupForm();
   showView("view-setup");
 }
@@ -2375,16 +2492,7 @@ async function loadAnalysisView(force = false) {
     return;
   }
 
-  const fetchAnalysis = async () => {
-    const gen = state._analysisGen;
-    const response = await apiRequest("getFinancialInsights");
-    if (response && response.success && response.data) {
-      state.cachedAnalysisData = response.data;
-      if (state._analysisGen === gen) state.analysisNeedsRefresh = false;
-      writeLocalCache("finance_cache_analysis", response.data);
-    }
-    return response;
-  };
+  const fetchAnalysis = fetchAnalysisData; // v1.3: compartida con la precarga
 
   // v1.2: versión anterior al instante + actualización en segundo plano
   if (state.cachedAnalysisData) {
@@ -2484,10 +2592,33 @@ function renderAnalysisInsights(data) {
 // SECCIÓN DE CONFIGURACIÓN (ADMINISTRADOR)
 // ==========================================================================
 
-async function loadAdminConsole() {
+async function loadAdminConsole(opts) {
+  opts = opts || {};
+  // v1.3: se muestra al instante la última versión y se actualiza en segundo plano.
+  // Tras un cambio del propio administrador (opts.fresh) se actualiza sin mostrar datos viejos.
+  if (state.cachedAdminConsole && !opts.blocking) {
+    if (!opts.fresh) renderAdminConsole(state.cachedAdminConsole);
+    const before = JSON.stringify(state.cachedAdminConsole);
+    try {
+      const response = await fetchAdminConsole();
+      if (response && response.success && isViewActive("view-config")) {
+        // Solo se vuelve a dibujar si algo cambió (evita pisar lo que el usuario esté escribiendo)
+        if (opts.fresh || JSON.stringify(state.cachedAdminConsole) !== before) {
+          renderAdminConsole(state.cachedAdminConsole);
+        }
+      } else if (response && !response.success && !opts.fresh) {
+        alert("Error al cargar configuración: " + response.message);
+        showView("view-home");
+      }
+    } catch (error) {
+      console.warn("Sin conexión al actualizar la configuración; se muestra la última versión.", error);
+    }
+    return;
+  }
+
   showLoader("Cargando variables...");
   try {
-    const response = await apiRequest("getAdminConsole");
+    const response = await fetchAdminConsole();
     if (response.success) {
       renderAdminConsole(response.data);
     } else {
@@ -2657,7 +2788,7 @@ async function updateUserFromAdmin(userData) {
     const response = await apiRequest("updateUser", userData);
     if (response.success) {
       alert(response.message);
-      loadAdminConsole(); // Recargar consola
+      loadAdminConsole({ fresh: true }); // Recargar consola (v1.3: sin bloquear)
     } else {
       alert("Error: " + response.message);
     }
@@ -2698,7 +2829,7 @@ async function handleSystemSettingsSubmit(e) {
     if (response.success) {
       state.catalogLoadedAt = 0; // v1.2: nombre de familia / PIN se reflejan al volver al inicio
       alert(response.message);
-      loadAdminConsole();
+      loadAdminConsole({ fresh: true });
     } else {
       alert("Error: " + response.message);
     }
@@ -2736,7 +2867,7 @@ async function handleCatalogSubmit(e, entityType, pkField, idInputId, getDataCal
       state.catalogLoadedAt = 0; // v1.2: forzar recarga de catálogos al volver al inicio
       alert(response.message);
       resetFormCallback();
-      loadAdminConsole(); // Recargar toda la consola
+      loadAdminConsole({ fresh: true }); // Recargar toda la consola (v1.3: sin bloquear)
     } else {
       alert("Error: " + response.message);
     }
@@ -3726,10 +3857,29 @@ function resetReminderForm() {
 /**
  * Carga los recordatorios desde el backend y los dibuja en pantalla.
  */
-async function loadRemindersView() {
+async function loadRemindersView(opts) {
+  opts = opts || {};
+  // v1.3: con datos guardados se muestran al instante y se actualizan en segundo plano
+  if (state.cachedReminders && !opts.blocking) {
+    if (!opts.keepCurrent) renderRemindersList(state.cachedReminders);
+    const bar = document.getElementById("reminders-summary-bar");
+    if (bar) bar.style.opacity = "0.55";
+    try {
+      const response = await fetchReminders();
+      if (response && response.success && isViewActive("view-reminders")) {
+        renderRemindersList(state.cachedReminders);
+      }
+    } catch (err) {
+      console.warn("Sin conexión al actualizar recordatorios; se muestra la última versión.", err);
+    } finally {
+      if (bar) bar.style.opacity = "";
+    }
+    return;
+  }
+
   showLoader("Cargando pendientes y recordatorios...");
   try {
-    const response = await apiRequest("getReminders");
+    const response = await fetchReminders();
     if (response.success) {
       renderRemindersList(response.data || []);
     } else {
@@ -3901,7 +4051,7 @@ async function handleSaveReminder(e) {
     if (response.success) {
       document.getElementById("card-form-reminder").classList.add("hidden");
       resetReminderForm();
-      loadRemindersView();
+      loadRemindersView({ keepCurrent: true });
     } else {
       alert("Error: " + response.message);
     }
@@ -3916,21 +4066,30 @@ async function handleSaveReminder(e) {
  * Tilda o destilda manualmente un recordatorio como pagado en un período.
  */
 window.handleToggleReminderCheck = async function(id, periodo) {
-  showLoader("Actualizando estado...");
+  // v1.3: el tilde cambia al instante; la confirmación del servidor llega en segundo plano
+  const ev = window.event;
+  const card = ev && ev.target && ev.target.closest ? ev.target.closest(".reminder-card") : null;
+  const icon = card ? card.querySelector(".reminder-check-btn .material-symbols-rounded") : null;
+  const prevIcon = icon ? icon.textContent : null;
+  if (card) card.style.opacity = "0.6";
+  if (icon) icon.textContent = prevIcon === "check" ? "" : "check";
   try {
     const response = await apiRequest("toggleReminderManualPayment", {
       id: id,
       periodo: periodo
     });
     if (response && response.success) {
-      loadRemindersView();
+      state.remindersFetchedAt = 0;
+      await loadRemindersView({ keepCurrent: true });
     } else {
+      if (icon) icon.textContent = prevIcon;
       alert("Error: " + (response ? response.message : "No se pudo actualizar"));
     }
   } catch (err) {
+    if (icon) icon.textContent = prevIcon;
     alert("Error de conexión al actualizar estado.");
   } finally {
-    hideLoader();
+    if (card) card.style.opacity = "";
   }
 };
 
@@ -3939,18 +4098,23 @@ window.handleToggleReminderCheck = async function(id, periodo) {
  */
 window.handleDeleteReminder = async function(id) {
   if (!confirm("¿Deseas eliminar este recordatorio recurrente?")) return;
-  showLoader("Eliminando recordatorio...");
+  const ev = window.event;
+  const card = ev && ev.target && ev.target.closest ? ev.target.closest(".reminder-card") : null;
+  if (card) card.style.display = "none"; // v1.3: respuesta visual inmediata
   try {
     const response = await apiRequest("deleteReminder", { id: id });
     if (response.success) {
-      loadRemindersView();
+      state.remindersFetchedAt = 0;
+      loadRemindersView({ keepCurrent: true });
     } else {
+      if (card) card.style.display = "";
       alert("Error: " + response.message);
     }
   } catch (err) {
+    if (card) card.style.display = "";
     alert("Error de conexión al eliminar.");
   } finally {
-    hideLoader();
+    // sin cargador bloqueante (v1.3)
   }
 };
 
@@ -3959,21 +4123,26 @@ window.handleDeleteReminder = async function(id) {
  */
 window.handleDismissReminder = async function(idRecordatorio, mesClave) {
   if (!confirm("¿Descartar este pendiente anterior para que ya no aparezca?")) return;
-  showLoader("Descartando pendiente...");
+  const ev = window.event;
+  const card = ev && ev.target && ev.target.closest ? ev.target.closest(".reminder-card") : null;
+  if (card) card.style.display = "none"; // v1.3: respuesta visual inmediata
   try {
     const response = await apiRequest("dismissReminderOccurrence", {
       idRecordatorio: idRecordatorio,
       mesClave: mesClave
     });
     if (response.success) {
-      loadRemindersView();
+      state.remindersFetchedAt = 0;
+      loadRemindersView({ keepCurrent: true });
     } else {
+      if (card) card.style.display = "";
       alert("Error: " + response.message);
     }
   } catch (err) {
+    if (card) card.style.display = "";
     alert("Error de conexión al descartar.");
   } finally {
-    hideLoader();
+    // sin cargador bloqueante (v1.3)
   }
 };
 
