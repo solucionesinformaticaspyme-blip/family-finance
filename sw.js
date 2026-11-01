@@ -1,4 +1,4 @@
-const CACHE_NAME = "finanzas-v2-cache-v14";
+const CACHE_NAME = "finanzas-v2-cache-v15";
 const STATIC_ASSETS = [
   "./",
   "./index.html",
@@ -15,7 +15,8 @@ self.addEventListener("install", (event) => {
   event.waitUntil(
     caches.open(CACHE_NAME).then((cache) => {
       console.log("[Service Worker] Caching static assets");
-      return cache.addAll(STATIC_ASSETS);
+      // v1.5: "reload" evita que el navegador use una copia vieja de su propia caché HTTP
+      return cache.addAll(STATIC_ASSETS.map((url) => new Request(url, { cache: "reload" })));
     }).then(() => self.skipWaiting())
   );
 });
@@ -61,22 +62,25 @@ self.addEventListener("fetch", (event) => {
     return;
   }
 
-  // Peticiones estáticas locales: Stale-While-Revalidate
-  event.respondWith(
-    caches.match(req).then((cachedResponse) => {
-      const fetchPromise = fetch(req).then((networkResponse) => {
-        if (networkResponse && networkResponse.status === 200) {
-          caches.open(CACHE_NAME).then((cache) => {
-            cache.put(req, networkResponse.clone());
-          });
+  // v1.5 - Archivos propios de la app: PRIMERO LA RED (siempre la versión más nueva si hay conexión).
+  // Si no hay conexión o la red tarda más de 4 s, se usa la copia guardada (la app abre igual sin señal).
+  event.respondWith((async () => {
+    const cache = await caches.open(CACHE_NAME);
+    const cached = await cache.match(req);
+    try {
+      const network = fetch(req, { cache: "no-cache" }).then((res) => {
+        if (res && res.status === 200 && res.type === "basic") {
+          cache.put(req, res.clone());
         }
-        return networkResponse;
-      }).catch(() => {
-        // Si no hay red, retornar la respuesta en caché si existe
-        return cachedResponse;
+        return res;
       });
-
-      return cachedResponse || fetchPromise;
-    })
-  );
+      if (!cached) return await network;
+      const timeout = new Promise((resolve) => setTimeout(() => resolve(null), 4000));
+      const winner = await Promise.race([network.catch(() => null), timeout]);
+      return winner || cached;
+    } catch (e) {
+      if (cached) return cached;
+      throw e;
+    }
+  })());
 });

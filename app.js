@@ -428,8 +428,12 @@ function initPwaAndNetworkStatus() {
   // 1. Registro del Service Worker (PWA)
   if ("serviceWorker" in navigator) {
     window.addEventListener("load", () => {
-      navigator.serviceWorker.register("./sw.js")
-        .then(reg => console.log("[PWA] Service Worker registrado:", reg.scope))
+      // v1.5: el service worker se revisa siempre contra el servidor (sin caché HTTP)
+      navigator.serviceWorker.register("./sw.js", { updateViaCache: "none" })
+        .then(reg => {
+          console.log("[PWA] Service Worker registrado:", reg.scope);
+          try { reg.update(); } catch (e) {}
+        })
         .catch(err => console.error("[PWA] Error al registrar Service Worker:", err));
     });
   }
@@ -629,7 +633,21 @@ function prefillSetupForm() {
 /**
  * Actualiza los textos generales de la interfaz con datos de la planilla.
  */
+const APP_VERSION = "1.5";
+
+/** v1.5: muestra la versión de la app al pie del inicio (para confirmar actualizaciones). */
+function renderAppVersionLabel() {
+  const home = document.getElementById("view-home");
+  if (!home || document.getElementById("app-version-label")) return;
+  const p = document.createElement("p");
+  p.id = "app-version-label";
+  p.textContent = "Versión " + APP_VERSION;
+  p.style.cssText = "text-align:center;font-size:11px;color:var(--text-secondary);opacity:0.7;margin:12px 0 18px;";
+  home.appendChild(p);
+}
+
 function updateUiMeta() {
+  renderAppVersionLabel();
   const familyName = state.catalog.nombreFamilia || "Finanzas Familiares";
   document.getElementById("home-family-name").innerText = familyName;
   
