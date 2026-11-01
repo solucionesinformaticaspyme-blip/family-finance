@@ -51,6 +51,13 @@ function setStoredItem(key, value) {
   setCookie(key, value, 365);
 }
 
+/** v1.6: borra la clave de Gemini que versiones anteriores guardaban en el dispositivo. */
+function forgetStoredGeminiKey() {
+  try { localStorage.removeItem("finance_gemini_api_key"); } catch (e) {}
+  try { sessionStorage.removeItem("finance_gemini_api_key"); } catch (e) {}
+  clearCookie("finance_gemini_api_key");
+}
+
 function clearStoredItems() {
   try { localStorage.clear(); } catch (e) {}
   try { sessionStorage.clear(); } catch (e) {}
@@ -87,7 +94,7 @@ const state = {
   currentSaldoApp: 0,
   ultimoArqueo: null,
   notificationEmails: [],
-  geminiApiKey: getStoredItem("finance_gemini_api_key") || "",
+  geminiApiKey: "", // v1.6: la clave vive solo en el servidor
 
   charts: {
     categories: null,
@@ -526,10 +533,7 @@ async function bootApp() {
         }
       }
 
-      if (response.data.geminiApiKey) {
-        state.geminiApiKey = response.data.geminiApiKey;
-        setStoredItem("finance_gemini_api_key", response.data.geminiApiKey);
-      }
+      forgetStoredGeminiKey(); // v1.6
 
       // Inicializar etiquetas del dashboard/menú
       updateUiMeta();
@@ -587,10 +591,7 @@ async function validateDeviceInBackground() {
         setStoredItem("finance_user", JSON.stringify(state.user));
         setStoredItem("finance_user_name", state.user.nombre);
       }
-      if (response.data.geminiApiKey) {
-        state.geminiApiKey = response.data.geminiApiKey;
-        setStoredItem("finance_gemini_api_key", response.data.geminiApiKey);
-      }
+      forgetStoredGeminiKey(); // v1.6
       updateUiMeta();
       // Si el PIN se activó desde otro dispositivo, se exige ahora
       if (state.catalog.pinActivado && !state.pinVerified && !isViewActive("view-pin")) {
@@ -633,7 +634,7 @@ function prefillSetupForm() {
 /**
  * Actualiza los textos generales de la interfaz con datos de la planilla.
  */
-const APP_VERSION = "1.5";
+const APP_VERSION = "1.6";
 
 /** v1.5: muestra la versión de la app al pie del inicio (para confirmar actualizaciones). */
 function renderAppVersionLabel() {
@@ -998,6 +999,7 @@ async function verifyPinCode(pin) {
  */
 function resetMovementForm() {
   state.editingId = null;
+  state.pendingMovId = null; // v1.6: formulario nuevo = movimiento nuevo
   document.getElementById("mov-id").value = "";
   document.getElementById("movement-view-title").innerText = "Registrar Movimiento";
   document.getElementById("btn-save-movement").innerText = "Guardar Movimiento";
@@ -1187,7 +1189,12 @@ async function handleMovementSubmit(e) {
   }
 
   // Generar ID de cliente anticipado para idempotencia en nuevos movimientos
-  const clientMovId = id || ("mov_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7));
+  // v1.6: si un envío anterior quedó sin respuesta (corte de red), se reutiliza el mismo ID:
+  // el servidor reconoce que ya lo guardó y no lo duplica.
+  if (!id && !state.pendingMovId) {
+    state.pendingMovId = "mov_" + Date.now() + "_" + Math.random().toString(36).substring(2, 7);
+  }
+  const clientMovId = id || state.pendingMovId;
 
   const payload = {
     id: clientMovId,
@@ -1239,6 +1246,7 @@ async function handleMovementSubmit(e) {
     }
 
     if (response.success) {
+      state.pendingMovId = null; // v1.6: confirmado por el servidor
       // Invalidar caché del dashboard para forzar recálculo fiel con el nuevo dato
       state.dashboardNeedsRefresh = true;
       state.analysisNeedsRefresh = true;
@@ -1362,7 +1370,7 @@ function renderSearchList(items) {
     }
 
     const formattedAmount = Utils.formatCurrency(item.MONTO);
-    const commentHtml = item.COMENTARIO ? `<div class="tx-comment">${item.COMENTARIO}</div>` : "";
+    const commentHtml = item.COMENTARIO ? `<div class="tx-comment">${escapeHtml(String(item.COMENTARIO))}</div>` : "";
     
     // Detalle USD si es especial
     const usdHtml = item.CANTIDAD_USD 
@@ -1373,10 +1381,10 @@ function renderSearchList(items) {
       <div class="tx-icon ${typeClass}">${typeIcon}</div>
       <div class="tx-main">
         <div class="tx-header">
-          <span class="tx-category">${item.CATEGORIA}</span>
-          <span class="tx-subcategory">${item.SUBCATEGORIA}</span>
+          <span class="tx-category">${escapeHtml(String(item.CATEGORIA || ""))}</span>
+          <span class="tx-subcategory">${escapeHtml(String(item.SUBCATEGORIA || ""))}</span>
         </div>
-        <div class="tx-meta">${Utils.formatDateReadable(item.FECHA)} por <b>${item.USUARIO || "S/D"}</b></div>
+        <div class="tx-meta">${Utils.formatDateReadable(item.FECHA)} por <b>${escapeHtml(String(item.USUARIO || "S/D"))}</b></div>
         ${usdHtml}
         ${commentHtml}
       </div>
@@ -2006,7 +2014,7 @@ function renderPivotTable(pivotData, kpis) {
       const isExpanded = !!state.pivotExpandedCategories[catKey];
       const hasSubs = cat.subcategorias && cat.subcategorias.length > 0;
 
-      html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${catKey}')">`;
+      html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${String(catKey).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">`;
       html += `<td><span class="pivot-cat-inner">`;
       if (hasSubs) {
         html += `<span class="material-symbols-rounded pivot-chevron ${isExpanded ? 'open' : ''}">chevron_right</span>`;
@@ -2043,7 +2051,7 @@ function renderPivotTable(pivotData, kpis) {
       const isExpanded = !!state.pivotExpandedCategories[catKey];
       const hasSubs = cat.subcategorias && cat.subcategorias.length > 0;
 
-      html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${catKey}')">`;
+      html += `<tr class="pivot-row-cat" onclick="togglePivotCategory('${String(catKey).replace(/\\/g, "\\\\").replace(/'/g, "\\'").replace(/"/g, "&quot;")}')">`;
       html += `<td><span class="pivot-cat-inner">`;
       if (hasSubs) {
         html += `<span class="material-symbols-rounded pivot-chevron ${isExpanded ? 'open' : ''}">chevron_right</span>`;
@@ -2462,8 +2470,8 @@ function renderDashboardRecentList(items) {
       <div class="tx-icon ${typeClass}" style="width: 32px; height: 32px; font-size: 14px;">${typeIcon}</div>
       <div class="tx-main">
         <div class="tx-header">
-          <span class="tx-category" style="font-size: 13px;">${item.CATEGORIA}</span>
-          <span class="tx-subcategory" style="font-size: 11px;">${item.SUBCATEGORIA}</span>
+          <span class="tx-category" style="font-size: 13px;">${escapeHtml(String(item.CATEGORIA || ""))}</span>
+          <span class="tx-subcategory" style="font-size: 11px;">${escapeHtml(String(item.SUBCATEGORIA || ""))}</span>
         </div>
         <div class="tx-meta" style="font-size: 10px;">${Utils.formatDateReadable(item.FECHA)}</div>
       </div>
@@ -3113,7 +3121,7 @@ async function handleConfigGeminiSubmit(e) {
     });
     if (res.success) {
       state.geminiApiKey = key;
-      setStoredItem("finance_gemini_api_key", key);
+      forgetStoredGeminiKey(); // v1.6: no se guarda en el dispositivo
       alert("Clave de Gemini guardada correctamente.");
     } else {
       alert("Error al guardar clave: " + res.message);
@@ -3379,7 +3387,7 @@ async function handleReceiptFileChange(e) {
     if (statusText) statusText.innerText = "Subiendo a Drive...";
     if (suggestedBadge) suggestedBadge.classList.add("hidden");
 
-    const currentApiKey = state.geminiApiKey || getStoredItem("finance_gemini_api_key") || "";
+    const currentApiKey = ""; // v1.6: el servidor usa la clave guardada en la planilla
 
     const response = await apiRequest("uploadReceipt", {
       base64Data: compressed.base64Data,
@@ -4627,6 +4635,9 @@ const Utils = {
       const dotParts = s.split(".");
       if (dotParts.length > 2) {
         s = s.replace(/\./g, "");
+      } else if (/^[+-]?[1-9]\d{0,2}\.\d{3}$/.test(s)) {
+        // v1.6: "1.500" o "15.000" -> separador de miles (nunca se usan 3 decimales en pesos)
+        s = s.replace(".", "");
       }
     }
 
