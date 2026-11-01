@@ -140,6 +140,13 @@
           <span class="material-symbols-rounded">schedule</span>
           <span>Última carga: <strong id="home-last-activity">--</strong></span>
         </div>
+        <!-- v1.7: pronóstico de cierre del mes (se completa con los datos de Análisis) -->
+        <button type="button" id="home-forecast-line" class="hidden" title="Ver pronóstico en Análisis"
+          style="display:flex;align-items:center;justify-content:center;gap:6px;width:100%;margin-top:10px;padding:8px 10px;border:1px solid var(--border-color);border-radius:var(--radius-sm);background:var(--primary-container);color:var(--text-primary);font:inherit;font-size:13px;cursor:pointer;">
+          <span class="material-symbols-rounded" style="font-size:18px;color:var(--primary-color);">query_stats</span>
+          <span>Fin de mes estimado: <strong id="home-forecast-amount">--</strong></span>
+          <span class="material-symbols-rounded" style="font-size:16px;color:var(--text-secondary);">chevron_right</span>
+        </button>
       </section>
 
       <main class="view-content menu-grid">
@@ -499,6 +506,28 @@
             <div id="dashboard-category-details" class="category-percentage-list">
               <!-- Cargado dinámicamente -->
             </div>
+          </div>
+
+          <!-- v1.7: Gastos por Medio de Pago (sincronizado con el selector de período) -->
+          <div class="chart-card">
+            <div class="chart-header-row">
+              <h4>Gastos por Medio de Pago</h4>
+              <span class="subtitle-small" id="pm-period-label" style="font-size:11px;color:var(--text-secondary);"></span>
+            </div>
+            <div class="chart-wrapper">
+              <canvas id="chart-payment-methods"></canvas>
+            </div>
+            <div id="dashboard-payment-methods-details" class="category-percentage-list"></div>
+          </div>
+
+          <!-- v1.7: Gastos por persona (según quién cargó el movimiento) -->
+          <div class="chart-card">
+            <div class="chart-header-row">
+              <h4>Gastos por Persona</h4>
+              <span class="subtitle-small" id="person-period-label" style="font-size:11px;color:var(--text-secondary);"></span>
+            </div>
+            <p class="subtitle-small" style="margin:0 0 8px;font-size:11px;color:var(--text-secondary);">Según quién cargó cada gasto en la app.</p>
+            <div id="dashboard-person-details" class="category-percentage-list"></div>
           </div>
 
           <!-- Ranking de Gastos (Subcategorías) -->

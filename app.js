@@ -209,6 +209,8 @@ function fetchAnalysisData() {
         state.cachedAnalysisData = response.data;
         if (state._analysisGen === gen) state.analysisNeedsRefresh = false;
         writeLocalCache("finance_cache_analysis", response.data);
+        try { updateHomeForecast(); } catch (e) {} // v1.7
+        try { if (isViewActive("view-dashboard")) renderPersonSection(); } catch (e) {} // v1.7
       }
       return response;
     } finally {
@@ -290,6 +292,124 @@ function schedulePrefetch() {
       console.warn("Precarga en segundo plano no completada:", e);
     }
   }, 2500);
+}
+
+// ---------- v1.7: Pronóstico en el inicio, gastos por persona y visor de comprobantes ----------
+
+/** Muestra "Fin de mes estimado" en la tarjeta de saldo del inicio (si hay pronóstico). */
+function updateHomeForecast() {
+  const line = document.getElementById("home-forecast-line");
+  const amountEl = document.getElementById("home-forecast-amount");
+  if (!line || !amountEl) return;
+  const f = state.cachedAnalysisData && state.cachedAnalysisData.forecast;
+  if (!f || f.saldoFinMesProyectado === undefined || f.saldoFinMesProyectado === null) {
+    line.classList.add("hidden");
+    return;
+  }
+  amountEl.innerText = Utils.formatCurrency(f.saldoFinMesProyectado);
+  amountEl.style.color = f.saldoFinMesProyectado < 0 ? "var(--danger-color)" : "var(--primary-color)";
+  line.classList.remove("hidden");
+}
+
+/** Lista "Gastos por Persona" del Dashboard para el período elegido en el selector. */
+function renderPersonSection() {
+  const container = document.getElementById("dashboard-person-details");
+  if (!container) return;
+  const label = document.getElementById("person-period-label");
+  const periodKey = state.selectedDonutPeriod || (state.cachedDashboardData && state.cachedDashboardData.selectedPeriodKey);
+  const periodInfo = state.cachedDashboardData && (state.cachedDashboardData.periodsCatalog || []).find(p => p.key === periodKey);
+  if (label) label.innerText = periodInfo ? periodInfo.label : "";
+  const pp = state.cachedAnalysisData && state.cachedAnalysisData.porPersona;
+  if (!pp) {
+    container.innerHTML = '<p class="text-secondary small text-center py-2">Cargando…</p>';
+    return;
+  }
+  const items = pp[periodKey] || [];
+  if (items.length === 0) {
+    container.innerHTML = '<p class="text-secondary small text-center py-2">No hay egresos en este período.</p>';
+    return;
+  }
+  const total = items.reduce((s, x) => s + (x.monto || 0), 0);
+  const COLORS = ["#2B6CB0", "#2E7D5B", "#D97706", "#8B5CF6", "#0D9488", "#D9534F"];
+  container.innerHTML = items.map((it, idx) => {
+    const pct = total > 0 ? ((it.monto / total) * 100).toFixed(1) : "0.0";
+    const color = COLORS[idx % COLORS.length];
+    return `
+      <div class="percentage-item">
+        <div class="percentage-header">
+          <span class="percentage-label" style="display:flex;align-items:center;gap:8px;">
+            <span style="width:10px;height:10px;border-radius:50%;background:${color};display:inline-block;flex-shrink:0;"></span>
+            ${escapeHtml(String(it.persona))} <small class="text-secondary">(${it.movimientos} mov.)</small>
+          </span>
+          <span class="percentage-values"><strong>${Utils.formatCurrency(it.monto)}</strong> ${pct}%</span>
+        </div>
+        <div class="progress-bar-container">
+          <div class="progress-bar-fill" style="width:${pct}%;background:${color};"></div>
+        </div>
+      </div>`;
+  }).join("");
+}
+
+/** Dibuja medios de pago y personas según el período elegido (complementa a la dona de categorías). */
+function renderPeriodBreakdowns() {
+  if (!state.cachedDashboardData) return;
+  try { renderPaymentMethodsSection(state.cachedDashboardData); } catch (e) { console.error("Error medios de pago:", e); }
+  try {
+    const label = document.getElementById("pm-period-label");
+    const periodInfo = (state.cachedDashboardData.periodsCatalog || []).find(p => p.key === state.selectedDonutPeriod);
+    if (label) label.innerText = periodInfo ? periodInfo.label : "";
+  } catch (e) {}
+  try { renderPersonSection(); } catch (e) { console.error("Error gastos por persona:", e); }
+}
+
+const _receiptCache = {};
+/** Abre el comprobante (foto del ticket) de un movimiento dentro de la app. */
+async function openReceiptViewer(url) {
+  let modal = document.getElementById("modal-receipt-viewer");
+  if (!modal) {
+    modal = document.createElement("div");
+    modal.id = "modal-receipt-viewer";
+    modal.className = "modal-overlay hidden";
+    modal.innerHTML = `
+      <div class="modal-content card" style="max-width:520px;width:92%;max-height:90vh;display:flex;flex-direction:column;">
+        <div class="modal-header-row">
+          <h3 style="margin: 0; font-size: 18px; color: var(--text-primary);">Comprobante</h3>
+          <button type="button" class="btn-icon" id="btn-close-receipt-viewer" title="Cerrar"><span class="material-symbols-rounded">close</span></button>
+        </div>
+        <div id="receipt-viewer-body" style="overflow:auto;text-align:center;min-height:120px;"></div>
+      </div>`;
+    document.getElementById("app-container").appendChild(modal);
+    const close = () => modal.classList.add("hidden");
+    modal.querySelector("#btn-close-receipt-viewer").addEventListener("click", close);
+    modal.addEventListener("click", (e) => { if (e.target === modal) close(); });
+  }
+  const body = modal.querySelector("#receipt-viewer-body");
+  body.innerHTML = '<p class="text-secondary" style="padding:30px 0;">Cargando comprobante…</p>';
+  modal.classList.remove("hidden");
+  try {
+    let r = _receiptCache[url];
+    if (!r) {
+      const res = await apiRequest("getReceipt", { url: url });
+      if (!res || !res.success) throw new Error(res && res.message ? res.message : "No se pudo abrir el comprobante.");
+      r = _receiptCache[url] = res.data;
+    }
+    if (String(r.mimeType).indexOf("image/") === 0) {
+      body.innerHTML = `<img src="data:${r.mimeType};base64,${r.base64}" alt="Comprobante" style="max-width:100%;border-radius:8px;">`;
+    } else {
+      body.innerHTML = `<iframe title="Comprobante" src="data:${r.mimeType};base64,${r.base64}" style="width:100%;height:70vh;border:0;"></iframe>`;
+    }
+  } catch (e) {
+    body.innerHTML = `<p style="color:var(--danger-color);padding:20px 0;">${escapeHtml(e.message || "No se pudo abrir el comprobante.")}</p>`;
+  }
+}
+
+/** Botón de comprobante para las tarjetas de movimientos (solo si el movimiento tiene uno). */
+function receiptButtonHtml(item, compact) {
+  if (!item || !item.COMPROBANTE_URL) return "";
+  const st = compact ? ' style="padding: 2px 7px; font-size: 11px;"' : "";
+  return `<button type="button" class="btn-edit-tx btn-receipt-tx" title="Ver comprobante"${st}>
+            <span class="material-symbols-rounded" style="font-size:${compact ? 13 : 14}px;">receipt_long</span>
+          </button>`;
 }
 
 function isViewActive(viewId) {
@@ -634,7 +754,7 @@ function prefillSetupForm() {
 /**
  * Actualiza los textos generales de la interfaz con datos de la planilla.
  */
-const APP_VERSION = "1.6";
+const APP_VERSION = "1.7";
 
 /** v1.5: muestra la versión de la app al pie del inicio (para confirmar actualizaciones). */
 function renderAppVersionLabel() {
@@ -684,6 +804,7 @@ async function updateHomeBalance() {
       }
     }
     saldoEl.style.opacity = state.dashboardNeedsRefresh ? "0.55" : "";
+    try { updateHomeForecast(); } catch (e) {} // v1.7
   };
   paint();
 
@@ -1391,6 +1512,7 @@ function renderSearchList(items) {
       <div class="tx-right">
         <span class="tx-amount ${amountClass}">${amountSign}${formattedAmount}</span>
         <div class="tx-actions">
+          ${receiptButtonHtml(item, false)}
           <button type="button" class="btn-edit-tx" data-id="${item.ID}" title="Editar movimiento">
             <span class="material-symbols-rounded" style="font-size:14px;">edit</span>
             Editar
@@ -1403,9 +1525,11 @@ function renderSearchList(items) {
     `;
 
     // Asignar clicks a los botones de editar y eliminar
-    card.querySelector(".btn-edit-tx").addEventListener("click", () => {
+    card.querySelector(".btn-edit-tx:not(.btn-receipt-tx)").addEventListener("click", () => {
       loadMovementToEdit(item);
     });
+    const receiptBtn = card.querySelector(".btn-receipt-tx"); // v1.7
+    if (receiptBtn) receiptBtn.addEventListener("click", () => openReceiptViewer(item.COMPROBANTE_URL));
 
     card.querySelector(".btn-delete-tx").addEventListener("click", () => {
       handleDeleteMovement(item.ID, `${item.CATEGORIA} - ${item.SUBCATEGORIA} (${amountSign}${formattedAmount})`);
@@ -1620,6 +1744,13 @@ function renderDashboard(data) {
     renderDonutSection(data);
   } catch (e) {
     console.error("Error al renderizar sección de dona:", e);
+  }
+
+  // 2b. v1.7: Medios de pago y personas del período elegido
+  try {
+    renderPeriodBreakdowns();
+  } catch (e) {
+    console.error("Error al renderizar desgloses del período:", e);
   }
 
   // 3. Ranking de Subcategorías del Mes
@@ -2478,6 +2609,7 @@ function renderDashboardRecentList(items) {
       <div class="tx-right">
         <span class="tx-amount ${amountClass}" style="font-size: 13px;">${amountSign}${formattedAmount}</span>
         <div class="tx-actions" style="margin-top:2px;">
+          ${receiptButtonHtml(item, true)}
           <button type="button" class="btn-edit-tx" data-id="${item.ID}" title="Editar" style="padding: 2px 7px; font-size: 11px;">
             <span class="material-symbols-rounded" style="font-size:13px;">edit</span>
           </button>
@@ -2488,9 +2620,11 @@ function renderDashboardRecentList(items) {
       </div>
     `;
 
-    card.querySelector(".btn-edit-tx").addEventListener("click", () => {
+    card.querySelector(".btn-edit-tx:not(.btn-receipt-tx)").addEventListener("click", () => {
       loadMovementToEdit(item);
     });
+    const receiptBtn = card.querySelector(".btn-receipt-tx"); // v1.7
+    if (receiptBtn) receiptBtn.addEventListener("click", () => openReceiptViewer(item.COMPROBANTE_URL));
 
     card.querySelector(".btn-delete-tx").addEventListener("click", () => {
       handleDeleteMovement(item.ID, `${item.CATEGORIA} - ${item.SUBCATEGORIA} (${amountSign}${formattedAmount})`);
@@ -3705,6 +3839,7 @@ function initEventListeners() {
       state.selectedDonutPeriod = e.target.value;
       if (state.cachedDashboardData) {
         renderDonutSection(state.cachedDashboardData);
+        renderPeriodBreakdowns(); // v1.7
       }
     });
   }
@@ -3892,6 +4027,12 @@ function initEventListeners() {
   const btnRemoveReceipt = document.getElementById("btn-remove-receipt");
   if (btnRemoveReceipt) {
     btnRemoveReceipt.addEventListener("click", handleRemoveReceipt);
+  }
+
+  // v1.7: la línea de pronóstico del inicio lleva a Análisis
+  const homeForecastLine = document.getElementById("home-forecast-line");
+  if (homeForecastLine) {
+    homeForecastLine.addEventListener("click", () => showView("view-analysis"));
   }
 
   // Navegación y refresco de Análisis Financiero
